@@ -38,6 +38,3 @@ xxhash
 # HuggingFace Space required
 spaces
 huggingface_hub>=0.20.0
-
-# Local nano-vllm package
--e acestep/third_parts/nano-vllm

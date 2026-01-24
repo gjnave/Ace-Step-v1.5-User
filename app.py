@@ -7,9 +7,13 @@ It imports and uses the existing v1.5 Gradio implementation without modification
 import os
 import sys
 
-# Add project root to Python path
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, project_root)
+# Get current directory (app.py location)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Add nano-vllm to Python path (local package)
+nano_vllm_path = os.path.join(current_dir, "acestep", "third_parts", "nano-vllm")
+if os.path.exists(nano_vllm_path):
+    sys.path.insert(0, nano_vllm_path)
 
 # Disable Gradio analytics
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
