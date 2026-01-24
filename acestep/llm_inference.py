@@ -309,7 +309,7 @@ class LLMHandler:
         try:
             if device == "auto":
                 device = "cuda" if torch.cuda.is_available() else "cpu"
-            
+
             self.device = device
             self.offload_to_cpu = offload_to_cpu
             # Set dtype based on device: bfloat16 for cuda, float32 for cpu
@@ -317,7 +317,12 @@ class LLMHandler:
                 self.dtype = torch.bfloat16 if device in ["cuda", "xpu"] else torch.float32
             else:
                 self.dtype = dtype
-            
+
+            # If lm_model_path is None, use default
+            if lm_model_path is None:
+                lm_model_path = "acestep-5Hz-lm-1.7B"
+                logger.info(f"[initialize] lm_model_path is None, using default: {lm_model_path}")
+
             full_lm_model_path = os.path.join(checkpoint_dir, lm_model_path)
             if not os.path.exists(full_lm_model_path):
                 return f"❌ 5Hz LM model not found at {full_lm_model_path}", False

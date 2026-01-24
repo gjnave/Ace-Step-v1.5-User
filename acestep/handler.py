@@ -365,6 +365,11 @@ class AceStepHandler:
 
             # 1. Load main model
             # config_path is relative path (e.g., "acestep-v15-turbo"), concatenate to checkpoints directory
+            # If config_path is None (HuggingFace Space with empty checkpoint), use default and auto-download
+            if config_path is None:
+                config_path = "acestep-v15-turbo"
+                logger.info(f"[initialize_service] config_path is None, using default: {config_path}")
+
             acestep_v15_checkpoint_path = os.path.join(checkpoint_dir, config_path)
 
             # Auto-download model if not exists (HuggingFace Space support)
