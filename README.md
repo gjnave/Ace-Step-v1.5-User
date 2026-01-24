@@ -1,3 +1,17 @@
+---
+title: ACE-Step v1.5
+emoji: 🎵
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: 5.27.0
+app_file: app.py
+pinned: false
+license: apache-2.0
+short_description: Music Generation Foundation Model v1.5
+suggested_hardware: a100-large
+---
+
 <h1 align="center">ACE-Step 1.5</h1>
 <h1 align="center">Pushing the Boundaries of Open-Source Music Generation</h1>
 <p align="center">
