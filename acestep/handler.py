@@ -122,6 +122,9 @@ class AceStepHandler:
         Ensure model is downloaded from HuggingFace Hub.
         Used for HuggingFace Space auto-download support.
 
+        Downloads the unified ACE-Step/Ace-Step1.5 repository which contains
+        both acestep-v15-turbo and acestep-5Hz-lm-1.7B models.
+
         Args:
             model_name: Model directory name (e.g., "acestep-v15-turbo")
             checkpoint_dir: Target checkpoint directory
@@ -131,29 +134,28 @@ class AceStepHandler:
         """
         from huggingface_hub import snapshot_download
 
-        # Model name to HuggingFace repo ID mapping
-        MODEL_REPO_MAP = {
-            "acestep-v15-turbo": "ACE-Step/ACE-Step-v1-3.5B-turbo",
-            "acestep-v15-base": "ACE-Step/ACE-Step-v1-3.5B",
-        }
-
-        repo_id = MODEL_REPO_MAP.get(model_name)
-        if repo_id is None:
-            # Try using model_name as repo_id directly
-            repo_id = f"ACE-Step/{model_name}"
+        # Unified repository containing all models
+        REPO_ID = "ACE-Step/Ace-Step1.5"
 
         model_path = os.path.join(checkpoint_dir, model_name)
-        logger.info(f"Downloading model {repo_id} to {model_path}...")
+
+        # Check if model already exists
+        if os.path.exists(model_path) and os.listdir(model_path):
+            logger.info(f"Model {model_name} already exists at {model_path}")
+            return model_path
+
+        # Download the entire repository to checkpoint_dir
+        logger.info(f"Downloading {REPO_ID} to {checkpoint_dir}...")
 
         try:
             snapshot_download(
-                repo_id=repo_id,
-                local_dir=model_path,
+                repo_id=REPO_ID,
+                local_dir=checkpoint_dir,
                 local_dir_use_symlinks=False,
             )
-            logger.info(f"Model {repo_id} downloaded successfully")
+            logger.info(f"Repository {REPO_ID} downloaded successfully")
         except Exception as e:
-            logger.error(f"Failed to download model {repo_id}: {e}")
+            logger.error(f"Failed to download repository {REPO_ID}: {e}")
             raise
 
         return model_path
