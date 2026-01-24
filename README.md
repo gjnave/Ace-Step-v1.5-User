@@ -8,9 +8,8 @@ sdk_version: 5.27.0
 python_version: 3.11
 app_file: app.py
 pinned: false
-license: apache-2.0
+license: mit
 short_description: Music Generation Foundation Model v1.5
-suggested_hardware: a100-large
 ---
 
 <h1 align="center">ACE-Step 1.5</h1>
