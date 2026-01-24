@@ -64,14 +64,19 @@ def create_demo(init_params=None, language='en'):
     Returns:
         Gradio Blocks instance
     """
+    # Get persistent storage path from init_params (for HuggingFace Space)
+    persistent_storage_path = None
+    if init_params:
+        persistent_storage_path = init_params.get('persistent_storage_path')
+
     # Use pre-initialized handlers if available, otherwise create new ones
     if init_params and init_params.get('pre_initialized') and 'dit_handler' in init_params:
         dit_handler = init_params['dit_handler']
         llm_handler = init_params['llm_handler']
     else:
-        dit_handler = AceStepHandler()  # DiT handler
-        llm_handler = LLMHandler()      # LM handler
-    
+        dit_handler = AceStepHandler(persistent_storage_path=persistent_storage_path)
+        llm_handler = LLMHandler(persistent_storage_path=persistent_storage_path)
+
     dataset_handler = DatasetHandler()  # Dataset handler
     
     # Create Gradio interface with all handlers and initialization parameters

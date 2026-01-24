@@ -43,72 +43,121 @@ warnings.filterwarnings("ignore")
 
 class AceStepHandler:
     """ACE-Step Business Logic Handler"""
-    
-    def __init__(self):
+
+    # HuggingFace Space environment detection
+    IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
+
+    def __init__(self, persistent_storage_path: Optional[str] = None):
         self.model = None
         self.config = None
         self.device = "cpu"
         self.dtype = torch.float32  # Will be set based on device in initialize_service
 
+        # HuggingFace Space persistent storage support
+        if persistent_storage_path is None and self.IS_HUGGINGFACE_SPACE:
+            persistent_storage_path = "/data"
+        self.persistent_storage_path = persistent_storage_path
+
         # VAE for audio encoding/decoding
         self.vae = None
-        
+
         # Text encoder and tokenizer
         self.text_encoder = None
         self.text_tokenizer = None
-        
+
         # Silence latent for initialization
         self.silence_latent = None
-        
+
         # Sample rate
         self.sample_rate = 48000
-        
+
         # Reward model (temporarily disabled)
         self.reward_model = None
-        
+
         # Batch size
         self.batch_size = 2
-        
+
         # Custom layers config
         self.custom_layers_config = {2: [6], 3: [10, 11], 4: [3], 5: [8, 9], 6: [8]}
         self.offload_to_cpu = False
         self.offload_dit_to_cpu = False
         self.current_offload_cost = 0.0
-        
+
         # LoRA state
         self.lora_loaded = False
         self.use_lora = False
         self._base_decoder = None  # Backup of original decoder
-    
+
+    def _get_checkpoint_dir(self) -> str:
+        """Get checkpoint directory, prioritizing persistent storage if available"""
+        if self.persistent_storage_path:
+            return os.path.join(self.persistent_storage_path, "checkpoints")
+        project_root = self._get_project_root()
+        return os.path.join(project_root, "checkpoints")
+
     def get_available_checkpoints(self) -> str:
         """Return project root directory path"""
-        # Get project root (handler.py is in acestep/, so go up two levels to project root)
-        project_root = self._get_project_root()
-        # default checkpoints
-        checkpoint_dir = os.path.join(project_root, "checkpoints")
+        checkpoint_dir = self._get_checkpoint_dir()
         if os.path.exists(checkpoint_dir):
             return [checkpoint_dir]
         else:
             return []
-    
+
     def get_available_acestep_v15_models(self) -> List[str]:
         """Scan and return all model directory names starting with 'acestep-v15-'"""
-        # Get project root
-        project_root = self._get_project_root()
-        checkpoint_dir = os.path.join(project_root, "checkpoints")
-        
+        checkpoint_dir = self._get_checkpoint_dir()
+
         models = []
         if os.path.exists(checkpoint_dir):
-            # Scan all directories starting with 'acestep-v15-' in checkpoints folder
             for item in os.listdir(checkpoint_dir):
                 item_path = os.path.join(checkpoint_dir, item)
                 if os.path.isdir(item_path) and item.startswith("acestep-v15-"):
                     models.append(item)
-        
-        # Sort by name
+
         models.sort()
         return models
-    
+
+    def _ensure_model_downloaded(self, model_name: str, checkpoint_dir: str) -> str:
+        """
+        Ensure model is downloaded from HuggingFace Hub.
+        Used for HuggingFace Space auto-download support.
+
+        Args:
+            model_name: Model directory name (e.g., "acestep-v15-turbo")
+            checkpoint_dir: Target checkpoint directory
+
+        Returns:
+            Path to the downloaded model
+        """
+        from huggingface_hub import snapshot_download
+
+        # Model name to HuggingFace repo ID mapping
+        MODEL_REPO_MAP = {
+            "acestep-v15-turbo": "ACE-Step/ACE-Step-v1-3.5B-turbo",
+            "acestep-v15-base": "ACE-Step/ACE-Step-v1-3.5B",
+        }
+
+        repo_id = MODEL_REPO_MAP.get(model_name)
+        if repo_id is None:
+            # Try using model_name as repo_id directly
+            repo_id = f"ACE-Step/{model_name}"
+
+        model_path = os.path.join(checkpoint_dir, model_name)
+        logger.info(f"Downloading model {repo_id} to {model_path}...")
+
+        try:
+            snapshot_download(
+                repo_id=repo_id,
+                local_dir=model_path,
+                local_dir_use_symlinks=False,
+            )
+            logger.info(f"Model {repo_id} downloaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to download model {repo_id}: {e}")
+            raise
+
+        return model_path
+
     def is_flash_attention_available(self) -> bool:
         """Check if flash attention is available on the system"""
         try:
@@ -309,11 +358,17 @@ class AceStepHandler:
 
             # Auto-detect project root (independent of passed project_root parameter)
             actual_project_root = self._get_project_root()
-            checkpoint_dir = os.path.join(actual_project_root, "checkpoints")
+            checkpoint_dir = self._get_checkpoint_dir()
+            os.makedirs(checkpoint_dir, exist_ok=True)
 
             # 1. Load main model
             # config_path is relative path (e.g., "acestep-v15-turbo"), concatenate to checkpoints directory
             acestep_v15_checkpoint_path = os.path.join(checkpoint_dir, config_path)
+
+            # Auto-download model if not exists (HuggingFace Space support)
+            if not os.path.exists(acestep_v15_checkpoint_path):
+                acestep_v15_checkpoint_path = self._ensure_model_downloaded(config_path, checkpoint_dir)
+
             if os.path.exists(acestep_v15_checkpoint_path):
                 # Determine attention implementation
                 if use_flash_attention and self.is_flash_attention_available():

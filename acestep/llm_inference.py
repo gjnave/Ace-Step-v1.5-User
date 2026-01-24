@@ -26,8 +26,11 @@ class LLMHandler:
     """5Hz LM Handler for audio code generation"""
 
     STOP_REASONING_TAG = "</think>"
-    
-    def __init__(self):
+
+    # HuggingFace Space environment detection
+    IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
+
+    def __init__(self, persistent_storage_path: Optional[str] = None):
         """Initialize LLMHandler with default values"""
         self.llm = None
         self.llm_tokenizer = None
@@ -37,26 +40,37 @@ class LLMHandler:
         self.device = "cpu"
         self.dtype = torch.float32
         self.offload_to_cpu = False
-        
-        # Shared constrained decoding processor (initialized once when LLM is loaded)
+
+        # HuggingFace Space persistent storage support
+        if persistent_storage_path is None and self.IS_HUGGINGFACE_SPACE:
+            persistent_storage_path = "/data"
+        self.persistent_storage_path = persistent_storage_path
+
+        # Shared constrained decoding processor
         self.constrained_processor: Optional[MetadataConstrainedLogitsProcessor] = None
-        
-        # Shared HuggingFace model for perplexity calculation (when using vllm backend)
+
+        # Shared HuggingFace model for perplexity calculation
         self._hf_model_for_scoring = None
-    
-    def get_available_5hz_lm_models(self) -> List[str]:
-        """Scan and return all model directory names starting with 'acestep-5Hz-lm-'"""
+
+    def _get_checkpoint_dir(self) -> str:
+        """Get checkpoint directory, prioritizing persistent storage"""
+        if self.persistent_storage_path:
+            return os.path.join(self.persistent_storage_path, "checkpoints")
         current_file = os.path.abspath(__file__)
         project_root = os.path.dirname(os.path.dirname(current_file))
-        checkpoint_dir = os.path.join(project_root, "checkpoints")
-        
+        return os.path.join(project_root, "checkpoints")
+
+    def get_available_5hz_lm_models(self) -> List[str]:
+        """Scan and return all model directory names starting with 'acestep-5Hz-lm-'"""
+        checkpoint_dir = self._get_checkpoint_dir()
+
         models = []
         if os.path.exists(checkpoint_dir):
             for item in os.listdir(checkpoint_dir):
                 item_path = os.path.join(checkpoint_dir, item)
                 if os.path.isdir(item_path) and item.startswith("acestep-5Hz-lm-"):
                     models.append(item)
-        
+
         models.sort()
         return models
     
