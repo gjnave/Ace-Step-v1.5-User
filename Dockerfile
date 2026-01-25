@@ -8,10 +8,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive
 
 # Install system dependencies
+# build-essential is required for triton to compile CUDA kernels
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ffmpeg \
     libsndfile1 \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Set up a new user named "user" with user ID 1000 (HuggingFace Space requirement)
