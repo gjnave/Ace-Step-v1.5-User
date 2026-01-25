@@ -73,11 +73,11 @@ def main():
     # Service mode configuration from environment variables
     config_path = os.environ.get(
         "SERVICE_MODE_DIT_MODEL",
-        "acestep-v15-turbo-fix-inst-shift-dynamic"
+        "acestep-v15-turbo"
     )
     lm_model_path = os.environ.get(
         "SERVICE_MODE_LM_MODEL",
-        "acestep-5Hz-lm-1.7B-v4-fix"
+        "acestep-5Hz-lm-1.7B"
     )
     backend = os.environ.get("SERVICE_MODE_BACKEND", "vllm")
     device = "auto"
