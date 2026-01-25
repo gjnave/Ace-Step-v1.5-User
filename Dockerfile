@@ -1,4 +1,4 @@
-# Use official Python image with CUDA support for HuggingFace Space
+# Use official Python image for HuggingFace Space
 FROM python:3.11-slim
 
 # Set environment variables
@@ -29,11 +29,12 @@ COPY --chown=user:user requirements.txt .
 # Copy the local nano-vllm package
 COPY --chown=user:user acestep/third_parts/nano-vllm $HOME/app/acestep/third_parts/nano-vllm
 
-# Install nano-vllm first (local package)
-RUN pip install --no-cache-dir --user $HOME/app/acestep/third_parts/nano-vllm
-
-# Install remaining dependencies
+# Install all dependencies from requirements.txt first
+# This includes torch and pre-built flash-attn wheel
 RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Install nano-vllm with --no-deps since all dependencies are already installed
+RUN pip install --no-cache-dir --user --no-deps $HOME/app/acestep/third_parts/nano-vllm
 
 # Copy the rest of the application
 COPY --chown=user:user . .
