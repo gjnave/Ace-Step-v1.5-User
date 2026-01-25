@@ -45,11 +45,43 @@ def get_gpu_memory_gb():
         return 0
 
 
+def get_persistent_storage_path():
+    """
+    Detect and return a writable persistent storage path.
+    
+    HuggingFace Space persistent storage requirements:
+    1. Must be enabled in Space settings
+    2. Path is typically /data for Docker SDK
+    3. Falls back to app directory if /data is not writable
+    """
+    # Try HuggingFace Space persistent storage first
+    hf_data_path = "/data"
+    
+    # Check if /data exists and is writable
+    if os.path.exists(hf_data_path):
+        try:
+            test_file = os.path.join(hf_data_path, ".write_test")
+            with open(test_file, 'w') as f:
+                f.write("test")
+            os.remove(test_file)
+            print(f"Using HuggingFace persistent storage: {hf_data_path}")
+            return hf_data_path
+        except (PermissionError, OSError) as e:
+            print(f"Warning: /data exists but is not writable: {e}")
+    
+    # Fall back to app directory (non-persistent but works without special config)
+    fallback_path = os.path.join(current_dir, "data")
+    os.makedirs(fallback_path, exist_ok=True)
+    print(f"Using local storage (non-persistent): {fallback_path}")
+    print("Note: To enable persistent storage, configure it in HuggingFace Space settings")
+    return fallback_path
+
+
 def main():
     """Main entry point for HuggingFace Space"""
     
-    # HuggingFace Space persistent storage path
-    persistent_storage_path = "/data"
+    # Get persistent storage path (auto-detect)
+    persistent_storage_path = get_persistent_storage_path()
     
     # Detect GPU memory for auto-configuration
     gpu_memory_gb = get_gpu_memory_gb()
