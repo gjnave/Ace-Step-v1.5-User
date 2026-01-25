@@ -7,6 +7,9 @@ torch>=2.9.1; sys_platform != 'win32'
 torchaudio>=2.9.1; sys_platform != 'win32'
 torchvision; sys_platform != 'win32'
 
+# Local packages (must be installed before other dependencies that might use them)
+./acestep/third_parts/nano-vllm
+
 # Core dependencies
 transformers>=4.51.0
 diffusers
