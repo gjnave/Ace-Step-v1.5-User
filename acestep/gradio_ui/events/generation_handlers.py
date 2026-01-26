@@ -480,10 +480,14 @@ def update_negative_prompt_visibility(init_llm_checked):
 
 def update_audio_cover_strength_visibility(task_type_value, init_llm_checked):
     """Update audio_cover_strength visibility and label"""
-    # Show if task is cover OR if LM is initialized
-    is_visible = (task_type_value == "cover") or init_llm_checked
+    # Show if task is cover OR if LM is initialized (but NOT for repaint mode)
+    # Repaint mode never shows this control
+    is_repaint = task_type_value == "repaint"
+    is_cover = task_type_value == "cover"
+    is_visible = is_cover or (init_llm_checked and not is_repaint)
+    
     # Change label based on context
-    if init_llm_checked and task_type_value != "cover":
+    if init_llm_checked and not is_cover:
         label = "LM codes strength"
         info = "Control how many denoising steps use LM-generated codes"
     else:
@@ -518,10 +522,12 @@ def update_instruction_ui(
     track_name_visible = task_type_value in ["lego", "extract"]
     # Show complete_track_classes for complete
     complete_visible = task_type_value == "complete"
-    # Show audio_cover_strength for cover OR when LM is initialized
-    audio_cover_strength_visible = (task_type_value == "cover") or init_llm_checked
+    # Show audio_cover_strength for cover OR when LM is initialized (but NOT for repaint)
+    is_repaint = task_type_value == "repaint"
+    is_cover = task_type_value == "cover"
+    audio_cover_strength_visible = is_cover or (init_llm_checked and not is_repaint)
     # Determine label and info based on context
-    if init_llm_checked and task_type_value != "cover":
+    if init_llm_checked and not is_cover:
         audio_cover_strength_label = "LM codes strength"
         audio_cover_strength_info = "Control how many denoising steps use LM-generated codes"
     else:
@@ -605,9 +611,9 @@ def reset_format_caption_flag():
 
 
 def update_audio_uploads_accordion(reference_audio, src_audio):
-    """Update Audio Uploads accordion open state based on whether audio files are present"""
+    """Update Audio Uploads visibility based on whether audio files are present"""
     has_audio = (reference_audio is not None) or (src_audio is not None)
-    return gr.Accordion(open=has_audio)
+    return gr.update(visible=has_audio)
 
 
 def handle_instrumental_checkbox(instrumental_checked, current_lyrics):
@@ -682,41 +688,106 @@ def update_audio_components_visibility(batch_size):
 
 def handle_generation_mode_change(mode: str):
     """
-    Handle generation mode change between Simple and Custom modes.
+    Handle generation mode change between Simple, Custom, Cover, and Repaint modes.
     
-    In Simple mode:
-    - Show simple mode group (query input, instrumental checkbox, create button)
-    - Collapse caption and lyrics accordions
-    - Hide optional parameters accordion
-    - Disable generate button until sample is created
-    
-    In Custom mode:
-    - Hide simple mode group
-    - Expand caption and lyrics accordions
-    - Show optional parameters accordion
-    - Enable generate button
+    Modes:
+    - Simple: Show simple mode group, hide others
+    - Custom: Show custom content (prompt), hide others
+    - Cover: Show src_audio_group + custom content + LM codes strength
+    - Repaint: Show src_audio_group + custom content + repaint time controls (hide LM codes strength)
     
     Args:
-        mode: "simple" or "custom"
+        mode: "simple", "custom", "cover", or "repaint"
         
     Returns:
         Tuple of updates for:
         - simple_mode_group (visibility)
-        - caption_accordion (open state)
-        - lyrics_accordion (open state)
+        - custom_mode_content (visibility)
+        - cover_mode_group (visibility) - legacy, always hidden
+        - repainting_group (visibility)
+        - task_type (value)
         - generate_btn (interactive state)
         - simple_sample_created (reset state)
-        - optional_params_accordion (visibility)
+        - src_audio_group (visibility) - shown for cover and repaint
+        - audio_cover_strength (visibility) - shown only for cover mode
     """
     is_simple = mode == "simple"
+    is_custom = mode == "custom"
+    is_cover = mode == "cover"
+    is_repaint = mode == "repaint"
+    
+    # Map mode to task_type
+    task_type_map = {
+        "simple": "text2music",
+        "custom": "text2music",
+        "cover": "cover",
+        "repaint": "repaint",
+    }
+    task_type_value = task_type_map.get(mode, "text2music")
     
     return (
         gr.update(visible=is_simple),  # simple_mode_group
-        gr.Accordion(open=not is_simple),  # caption_accordion - collapsed in simple, open in custom
-        gr.Accordion(open=not is_simple),  # lyrics_accordion - collapsed in simple, open in custom
-        gr.update(interactive=not is_simple),  # generate_btn - disabled in simple until sample created
+        gr.update(visible=not is_simple),  # custom_mode_content - visible for custom/cover/repaint
+        gr.update(visible=False),  # cover_mode_group - legacy, always hidden
+        gr.update(visible=is_repaint),  # repainting_group - time range controls
+        gr.update(value=task_type_value),  # task_type
+        gr.update(interactive=True),  # generate_btn - always enabled (Simple mode does create+generate in one step)
         False,  # simple_sample_created - reset to False on mode change
-        gr.Accordion(open=not is_simple),  # optional_params_accordion - hidden in simple mode
+        gr.update(visible=is_cover or is_repaint),  # src_audio_group - shown for cover and repaint
+        gr.update(visible=is_cover),  # audio_cover_strength - only shown for cover mode
+    )
+
+
+def process_source_audio(dit_handler, llm_handler, src_audio, constrained_decoding_debug):
+    """
+    Process source audio: convert to codes and then transcribe.
+    This combines convert_src_audio_to_codes_wrapper + transcribe_audio_codes.
+    
+    Args:
+        dit_handler: DiT handler instance for audio code conversion
+        llm_handler: LLM handler instance for transcription
+        src_audio: Path to source audio file
+        constrained_decoding_debug: Whether to enable debug logging
+        
+    Returns:
+        Tuple of (audio_codes, status_message, caption, lyrics, bpm, duration, keyscale, language, timesignature, is_format_caption)
+    """
+    if src_audio is None:
+        return ("", "No audio file provided", "", "", None, None, "", "", "", False)
+    
+    # Step 1: Convert audio to codes
+    try:
+        codes_string = dit_handler.convert_src_audio_to_codes(src_audio)
+        if not codes_string:
+            return ("", "Failed to convert audio to codes", "", "", None, None, "", "", "", False)
+    except Exception as e:
+        return ("", f"Error converting audio: {str(e)}", "", "", None, None, "", "", "", False)
+    
+    # Step 2: Transcribe the codes
+    result = understand_music(
+        llm_handler=llm_handler,
+        audio_codes=codes_string,
+        use_constrained_decoding=True,
+        constrained_decoding_debug=constrained_decoding_debug,
+    )
+    
+    # Handle error case
+    if not result.success:
+        if result.error == "LLM not initialized":
+            return (codes_string, t("messages.lm_not_initialized"), "", "", None, None, "", "", "", False)
+        return (codes_string, result.status_message, "", "", None, None, "", "", "", False)
+    
+    return (
+        codes_string,
+        result.status_message,
+        result.caption,
+        result.lyrics,
+        result.bpm,
+        result.duration,
+        result.keyscale,
+        result.language,
+        result.timesignature,
+        True  # Set is_format_caption to True
     )
 
 

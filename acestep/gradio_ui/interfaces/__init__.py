@@ -65,6 +65,14 @@ def create_gradio_interface(dit_handler, llm_handler, dataset_handler, init_para
         <div class="main-header">
             <h1>{t("app.title")}</h1>
             <p>{t("app.subtitle")}</p>
+            <p style="margin-top: 0.5rem;">
+                <a href="https://ace-step-v1.5.github.io" target="_blank">Project</a> |
+                <a href="https://huggingface.co/collections/ACE-Step/ace-step-15" target="_blank">Hugging Face</a> |
+                <a href="https://modelscope.cn/models/ACE-Step/ACE-Step-v1-5" target="_blank">ModelScope</a> |
+                <a href="https://huggingface.co/spaces/ACE-Step/Ace-Step-v1.5" target="_blank">Space Demo</a> |
+                <a href="https://discord.gg/PeWDxrkdj7" target="_blank">Discord</a> |
+                <a href="https://arxiv.org/abs/2506.00045" target="_blank">Technical Report</a>
+            </p>
         </div>
         """)
         
@@ -81,8 +89,8 @@ def create_gradio_interface(dit_handler, llm_handler, dataset_handler, init_para
         # Pass init_params to support hiding in service mode
         training_section = create_training_section(dit_handler, llm_handler, init_params=init_params)
         
-        # Connect event handlers
-        setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, dataset_section, generation_section, results_section)
+        # Connect event handlers (pass init_params for multi-model support)
+        setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, dataset_section, generation_section, results_section, init_params=init_params)
         
         # Connect training event handlers
         setup_training_event_handlers(demo, dit_handler, llm_handler, training_section)

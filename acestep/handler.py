@@ -315,6 +315,11 @@ class AceStepHandler:
         offload_to_cpu: bool = False,
         offload_dit_to_cpu: bool = False,
         quantization: Optional[str] = None,
+        # Shared components (for multi-model setup to save memory)
+        shared_vae = None,
+        shared_text_encoder = None,
+        shared_text_tokenizer = None,
+        shared_silence_latent = None,
     ) -> Tuple[str, bool]:
         """
         Initialize DiT model service
@@ -327,6 +332,10 @@ class AceStepHandler:
             compile_model: Whether to use torch.compile to optimize the model
             offload_to_cpu: Whether to offload models to CPU when not in use
             offload_dit_to_cpu: Whether to offload DiT model to CPU when not in use (only effective if offload_to_cpu is True)
+            shared_vae: Optional shared VAE instance (for multi-model setup)
+            shared_text_encoder: Optional shared text encoder instance (for multi-model setup)
+            shared_text_tokenizer: Optional shared text tokenizer instance (for multi-model setup)
+            shared_silence_latent: Optional shared silence latent tensor (for multi-model setup)
         
         Returns:
             (status_message, enable_generate_button)
@@ -440,54 +449,77 @@ class AceStepHandler:
                         logger.info(f"[initialize_service] DiT quantized with: {self.quantization}")
                     
                     
-                silence_latent_path = os.path.join(acestep_v15_checkpoint_path, "silence_latent.pt")
-                if os.path.exists(silence_latent_path):
-                    self.silence_latent = torch.load(silence_latent_path).transpose(1, 2)
-                    # Always keep silence_latent on GPU - it's used in many places outside model context
-                    # and is small enough that it won't significantly impact VRAM
-                    self.silence_latent = self.silence_latent.to(device).to(self.dtype)
+                # Load or use shared silence_latent
+                if shared_silence_latent is not None:
+                    self.silence_latent = shared_silence_latent
+                    logger.info("[initialize_service] Using shared silence_latent")
                 else:
-                    raise FileNotFoundError(f"Silence latent not found at {silence_latent_path}")
+                    silence_latent_path = os.path.join(acestep_v15_checkpoint_path, "silence_latent.pt")
+                    if os.path.exists(silence_latent_path):
+                        self.silence_latent = torch.load(silence_latent_path).transpose(1, 2)
+                        # Always keep silence_latent on GPU - it's used in many places outside model context
+                        # and is small enough that it won't significantly impact VRAM
+                        self.silence_latent = self.silence_latent.to(device).to(self.dtype)
+                    else:
+                        raise FileNotFoundError(f"Silence latent not found at {silence_latent_path}")
             else:
                 raise FileNotFoundError(f"ACE-Step V1.5 checkpoint not found at {acestep_v15_checkpoint_path}")
             
-            # 2. Load VAE
-            vae_checkpoint_path = os.path.join(checkpoint_dir, "vae")
-            if os.path.exists(vae_checkpoint_path):
-                self.vae = AutoencoderOobleck.from_pretrained(vae_checkpoint_path)
-                # Use bfloat16 for VAE on GPU, otherwise use self.dtype (float32 on CPU)
-                vae_dtype = self._get_vae_dtype(device)
-                if not self.offload_to_cpu:
-                    self.vae = self.vae.to(device).to(vae_dtype)
-                else:
-                    self.vae = self.vae.to("cpu").to(vae_dtype)
-                self.vae.eval()
+            # 2. Load or use shared VAE
+            vae_checkpoint_path = os.path.join(checkpoint_dir, "vae")  # Define for status message
+            if shared_vae is not None:
+                self.vae = shared_vae
+                logger.info("[initialize_service] Using shared VAE")
             else:
-                raise FileNotFoundError(f"VAE checkpoint not found at {vae_checkpoint_path}")
+                if os.path.exists(vae_checkpoint_path):
+                    self.vae = AutoencoderOobleck.from_pretrained(vae_checkpoint_path)
+                    # Use bfloat16 for VAE on GPU, otherwise use self.dtype (float32 on CPU)
+                    vae_dtype = self._get_vae_dtype(device)
+                    if not self.offload_to_cpu:
+                        self.vae = self.vae.to(device).to(vae_dtype)
+                    else:
+                        self.vae = self.vae.to("cpu").to(vae_dtype)
+                    self.vae.eval()
+                else:
+                    raise FileNotFoundError(f"VAE checkpoint not found at {vae_checkpoint_path}")
 
-            if compile_model:
-                self.vae = torch.compile(self.vae)
+                if compile_model:
+                    self.vae = torch.compile(self.vae)
             
-            # 3. Load text encoder and tokenizer
-            text_encoder_path = os.path.join(checkpoint_dir, "Qwen3-Embedding-0.6B")
-            if os.path.exists(text_encoder_path):
-                self.text_tokenizer = AutoTokenizer.from_pretrained(text_encoder_path)
-                self.text_encoder = AutoModel.from_pretrained(text_encoder_path)
-                if not self.offload_to_cpu:
-                    self.text_encoder = self.text_encoder.to(device).to(self.dtype)
-                else:
-                    self.text_encoder = self.text_encoder.to("cpu").to(self.dtype)
-                self.text_encoder.eval()
+            # 3. Load or use shared text encoder and tokenizer
+            text_encoder_path = os.path.join(checkpoint_dir, "Qwen3-Embedding-0.6B")  # Define for status message
+            if shared_text_encoder is not None and shared_text_tokenizer is not None:
+                self.text_encoder = shared_text_encoder
+                self.text_tokenizer = shared_text_tokenizer
+                logger.info("[initialize_service] Using shared text encoder and tokenizer")
             else:
-                raise FileNotFoundError(f"Text encoder not found at {text_encoder_path}")
+                if os.path.exists(text_encoder_path):
+                    self.text_tokenizer = AutoTokenizer.from_pretrained(text_encoder_path)
+                    self.text_encoder = AutoModel.from_pretrained(text_encoder_path)
+                    if not self.offload_to_cpu:
+                        self.text_encoder = self.text_encoder.to(device).to(self.dtype)
+                    else:
+                        self.text_encoder = self.text_encoder.to("cpu").to(self.dtype)
+                    self.text_encoder.eval()
+                else:
+                    raise FileNotFoundError(f"Text encoder not found at {text_encoder_path}")
 
             # Determine actual attention implementation used
             actual_attn = getattr(self.config, "_attn_implementation", "eager")
             
+            # Determine if using shared components
+            using_shared = shared_vae is not None or shared_text_encoder is not None
+            
             status_msg = f"✅ Model initialized successfully on {device}\n"
             status_msg += f"Main model: {acestep_v15_checkpoint_path}\n"
-            status_msg += f"VAE: {vae_checkpoint_path}\n"
-            status_msg += f"Text encoder: {text_encoder_path}\n"
+            if shared_vae is None:
+                status_msg += f"VAE: {vae_checkpoint_path}\n"
+            else:
+                status_msg += f"VAE: shared\n"
+            if shared_text_encoder is None:
+                status_msg += f"Text encoder: {text_encoder_path}\n"
+            else:
+                status_msg += f"Text encoder: shared\n"
             status_msg += f"Dtype: {self.dtype}\n"
             status_msg += f"Attention: {actual_attn}\n"
             status_msg += f"Compiled: {compile_model}\n"

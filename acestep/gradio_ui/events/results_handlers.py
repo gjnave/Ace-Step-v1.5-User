@@ -265,106 +265,45 @@ def _build_generation_info(
         Formatted generation info string
     """
     info_parts = []
+    songs_label = f"({num_audios} songs)"
     
-    # Part 1: Per-track average time (prominently displayed at the top)
-    # Only count model time (LM + DiT), not post-processing like audio conversion
-    if time_costs and num_audios > 0:
-        lm_total = time_costs.get('lm_total_time', 0.0)
-        dit_total = time_costs.get('dit_total_time_cost', 0.0)
-        model_total = lm_total + dit_total
-        if model_total > 0:
-            avg_time_per_track = model_total / num_audios
-            avg_section = f"**🎯 Average Time per Track: {avg_time_per_track:.2f}s** ({num_audios} track(s))"
-            info_parts.append(avg_section)
-    
-    # Part 2: LM-generated metadata (if available)
-    if lm_metadata:
-        metadata_lines = []
-        if lm_metadata.get('bpm'):
-            metadata_lines.append(f"- **BPM:** {lm_metadata['bpm']}")
-        if lm_metadata.get('caption'):
-            metadata_lines.append(f"- **Refined Caption:** {lm_metadata['caption']}")
-        if lm_metadata.get('lyrics'):
-            metadata_lines.append(f"- **Refined Lyrics:** {lm_metadata['lyrics']}")
-        if lm_metadata.get('duration'):
-            metadata_lines.append(f"- **Duration:** {lm_metadata['duration']} seconds")
-        if lm_metadata.get('keyscale'):
-            metadata_lines.append(f"- **Key Scale:** {lm_metadata['keyscale']}")
-        if lm_metadata.get('language'):
-            metadata_lines.append(f"- **Language:** {lm_metadata['language']}")
-        if lm_metadata.get('timesignature'):
-            metadata_lines.append(f"- **Time Signature:** {lm_metadata['timesignature']}")
-        
-        if metadata_lines:
-            metadata_section = "**🤖 LM-Generated Metadata:**\n" + "\n".join(metadata_lines)
-            info_parts.append(metadata_section)
-    
-    # Part 3: Time costs breakdown (formatted and beautified)
+    # Part 1: Total generation time (LM + DiT)
     if time_costs:
-        time_lines = []
-        
-        # LM time costs
-        lm_phase1 = time_costs.get('lm_phase1_time', 0.0)
-        lm_phase2 = time_costs.get('lm_phase2_time', 0.0)
         lm_total = time_costs.get('lm_total_time', 0.0)
-        
-        if lm_total > 0:
-            time_lines.append("**🧠 LM Time:**")
-            if lm_phase1 > 0:
-                time_lines.append(f"  - Phase 1 (CoT): {lm_phase1:.2f}s")
-            if lm_phase2 > 0:
-                time_lines.append(f"  - Phase 2 (Codes): {lm_phase2:.2f}s")
-            time_lines.append(f"  - Total: {lm_total:.2f}s")
-        
-        # DiT time costs
-        dit_encoder = time_costs.get('dit_encoder_time_cost', 0.0)
-        dit_model = time_costs.get('dit_model_time_cost', 0.0)
-        dit_vae_decode = time_costs.get('dit_vae_decode_time_cost', 0.0)
-        dit_offload = time_costs.get('dit_offload_time_cost', 0.0)
         dit_total = time_costs.get('dit_total_time_cost', 0.0)
-        if dit_total > 0:
-            time_lines.append("\n**🎵 DiT Time:**")
-            if dit_encoder > 0:
-                time_lines.append(f"  - Encoder: {dit_encoder:.2f}s")
-            if dit_model > 0:
-                time_lines.append(f"  - Model: {dit_model:.2f}s")
-            if dit_vae_decode > 0:
-                time_lines.append(f"  - VAE Decode: {dit_vae_decode:.2f}s")
-            if dit_offload > 0:
-                time_lines.append(f"  - Offload: {dit_offload:.2f}s")
-            time_lines.append(f"  - Total: {dit_total:.2f}s")
+        generation_total = lm_total + dit_total
         
-        # Post-processing time costs
+        if generation_total > 0:
+            avg_per_song = generation_total / num_audios if num_audios > 0 else 0
+            gen_lines = [
+                f"**🎵 Total generation time {songs_label}: {generation_total:.2f}s**",
+                f"**{avg_per_song:.2f}s per song**",
+            ]
+            if lm_total > 0:
+                gen_lines.append(f"- LM phase {songs_label}: {lm_total:.2f}s")
+            if dit_total > 0:
+                gen_lines.append(f"- DiT phase {songs_label}: {dit_total:.2f}s")
+            info_parts.append("\n".join(gen_lines))
+    
+    # Part 2: Total processing time (post-processing)
+    if time_costs:
         audio_conversion_time = time_costs.get('audio_conversion_time', 0.0)
         auto_score_time = time_costs.get('auto_score_time', 0.0)
         auto_lrc_time = time_costs.get('auto_lrc_time', 0.0)
+        processing_total = audio_conversion_time + auto_score_time + auto_lrc_time
         
-        if audio_conversion_time > 0 or auto_score_time > 0 or auto_lrc_time > 0:
-            time_lines.append("\n**🔧 Post-processing Time:**")
+        if processing_total > 0:
+            proc_lines = [
+                f"**🔧 Total processing time {songs_label}: {processing_total:.2f}s**",
+            ]
             if audio_conversion_time > 0:
-                time_lines.append(f"  - Audio Conversion: {audio_conversion_time:.2f}s")
+                info_format = time_costs.get('audio_format', 'mp3')
+                proc_lines.append(f"- to {info_format} {songs_label}: {audio_conversion_time:.2f}s")
             if auto_score_time > 0:
-                time_lines.append(f"  - Auto Score: {auto_score_time:.2f}s")
+                proc_lines.append(f"- scoring {songs_label}: {auto_score_time:.2f}s")
             if auto_lrc_time > 0:
-                time_lines.append(f"  - Auto LRC: {auto_lrc_time:.2f}s")
-        
-        if time_lines:
-            time_section = "\n".join(time_lines)
-            info_parts.append(time_section)
-    
-    # Part 4: Generation summary
-    summary_lines = [
-        "**🎵 Generation Complete**",
-        f"  - **Seeds:** {seed_value}",
-        f"  - **Steps:** {inference_steps}",
-        f"  - **Audio Count:** {num_audios} audio(s)",
-    ]
-    info_parts.append("\n".join(summary_lines))
-    
-    # Part 5: Pipeline total time (at the end)
-    pipeline_total = time_costs.get('pipeline_total_time', 0.0) if time_costs else 0.0
-    if pipeline_total > 0:
-        info_parts.append(f"**⏱️ Total Time: {pipeline_total:.2f}s**")
+                proc_lines.append(f"- LRC detection {songs_label}: {auto_lrc_time:.2f}s")
+            info_parts.append("\n".join(proc_lines))
     
     # Combine all parts
     return "\n\n".join(info_parts)
@@ -775,7 +714,9 @@ def generate_with_progress(
             codes_display_updates[i] = gr.update(value=code_str, visible=True)  # Keep visible=True
             
             details_accordion_updates = [gr.skip() for _ in range(8)]
-            # Don't change accordion visibility - keep it always expandable
+            # Auto-expand accordion if auto_score or auto_lrc is enabled
+            if auto_score or auto_lrc:
+                details_accordion_updates[i] = gr.Accordion(open=True)
             
             # Clear LRC first (this triggers .change() to clear subtitles)
             # Keep visible=True to ensure .change() event is properly triggered

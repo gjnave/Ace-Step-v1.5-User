@@ -12,8 +12,20 @@ from . import training_handlers as train_h
 from acestep.gradio_ui.i18n import t
 
 
-def setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, dataset_section, generation_section, results_section):
-    """Setup event handlers connecting UI components and business logic"""
+def setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, dataset_section, generation_section, results_section, init_params=None):
+    """Setup event handlers connecting UI components and business logic
+    
+    Args:
+        init_params: Dictionary containing initialization parameters including:
+            - dit_handler_2: Optional second DiT handler for multi-model setup
+            - available_dit_models: List of available DiT model names
+            - config_path: Primary model config path
+            - config_path_2: Secondary model config path (if available)
+    """
+    # Get secondary DiT handler from init_params (for multi-model support)
+    dit_handler_2 = init_params.get('dit_handler_2') if init_params else None
+    config_path_1 = init_params.get('config_path', '') if init_params else ''
+    config_path_2 = init_params.get('config_path_2', '') if init_params else ''
     
     # ========== Dataset Handlers ==========
     dataset_section["import_dataset_btn"].click(
@@ -260,17 +272,42 @@ def setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, datase
         ]
     )
     
-    # ========== Simple/Custom Mode Toggle ==========
+    # ========== Generation Mode Toggle (Simple/Custom/Cover/Repaint) ==========
     generation_section["generation_mode"].change(
         fn=gen_h.handle_generation_mode_change,
         inputs=[generation_section["generation_mode"]],
         outputs=[
             generation_section["simple_mode_group"],
-            generation_section["caption_accordion"],
-            generation_section["lyrics_accordion"],
+            generation_section["custom_mode_content"],
+            generation_section["cover_mode_group"],
+            generation_section["repainting_group"],
+            generation_section["task_type"],
             generation_section["generate_btn"],
             generation_section["simple_sample_created"],
-            generation_section["optional_params_accordion"],
+            generation_section["src_audio_group"],
+            generation_section["audio_cover_strength"],
+        ]
+    )
+    
+    # ========== Process Source Audio Button ==========
+    # Combines Convert to Codes + Transcribe in one step
+    generation_section["process_src_btn"].click(
+        fn=lambda src, debug: gen_h.process_source_audio(dit_handler, llm_handler, src, debug),
+        inputs=[
+            generation_section["src_audio"],
+            generation_section["constrained_decoding_debug"]
+        ],
+        outputs=[
+            generation_section["text2music_audio_code_string"],
+            results_section["status_output"],
+            generation_section["captions"],
+            generation_section["lyrics"],
+            generation_section["bpm"],
+            generation_section["audio_duration"],
+            generation_section["key_scale"],
+            generation_section["vocal_language"],
+            generation_section["time_signature"],
+            results_section["is_format_caption_state"],
         ]
     )
     
@@ -451,10 +488,28 @@ def setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, datase
             ],
         js=download_existing_js  # Run the above JS
     )
-    # ========== Send to SRC Handlers ==========
+    # ========== Send to Cover Handlers ==========
+    def send_to_cover_handler(audio_file, lm_metadata):
+        """Send audio to cover mode and switch to cover"""
+        if audio_file is None:
+            return (gr.skip(),) * 11
+        return (
+            audio_file,      # src_audio
+            gr.skip(),       # bpm
+            gr.skip(),       # captions
+            gr.skip(),       # lyrics
+            gr.skip(),       # audio_duration
+            gr.skip(),       # key_scale
+            gr.skip(),       # vocal_language
+            gr.skip(),       # time_signature
+            gr.skip(),       # is_format_caption_state
+            "cover",         # generation_mode - switch to cover
+            "cover",         # task_type - set to cover
+        )
+    
     for btn_idx in range(1, 9):
-        results_section[f"send_to_src_btn_{btn_idx}"].click(
-            fn=res_h.send_audio_to_src_with_metadata,
+        results_section[f"send_to_cover_btn_{btn_idx}"].click(
+            fn=send_to_cover_handler,
             inputs=[
                 results_section[f"generated_audio_{btn_idx}"],
                 results_section["lm_metadata_state"]
@@ -468,7 +523,50 @@ def setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, datase
                 generation_section["key_scale"],
                 generation_section["vocal_language"],
                 generation_section["time_signature"],
-                results_section["is_format_caption_state"]
+                results_section["is_format_caption_state"],
+                generation_section["generation_mode"],
+                generation_section["task_type"],
+            ]
+        )
+    
+    # ========== Send to Repaint Handlers ==========
+    def send_to_repaint_handler(audio_file, lm_metadata):
+        """Send audio to repaint mode and switch to repaint"""
+        if audio_file is None:
+            return (gr.skip(),) * 11
+        return (
+            audio_file,      # src_audio
+            gr.skip(),       # bpm
+            gr.skip(),       # captions
+            gr.skip(),       # lyrics
+            gr.skip(),       # audio_duration
+            gr.skip(),       # key_scale
+            gr.skip(),       # vocal_language
+            gr.skip(),       # time_signature
+            gr.skip(),       # is_format_caption_state
+            "repaint",       # generation_mode - switch to repaint
+            "repaint",       # task_type - set to repaint
+        )
+    
+    for btn_idx in range(1, 9):
+        results_section[f"send_to_repaint_btn_{btn_idx}"].click(
+            fn=send_to_repaint_handler,
+            inputs=[
+                results_section[f"generated_audio_{btn_idx}"],
+                results_section["lm_metadata_state"]
+            ],
+            outputs=[
+                generation_section["src_audio"],
+                generation_section["bpm"],
+                generation_section["captions"],
+                generation_section["lyrics"],
+                generation_section["audio_duration"],
+                generation_section["key_scale"],
+                generation_section["vocal_language"],
+                generation_section["time_signature"],
+                results_section["is_format_caption_state"],
+                generation_section["generation_mode"],
+                generation_section["task_type"],
             ]
         )
     
@@ -519,12 +617,84 @@ def setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, datase
             ]
         )
     
-    def generation_wrapper(*args):
-        yield from res_h.generate_with_batch_management(dit_handler, llm_handler, *args)
+    def generation_wrapper(selected_model, generation_mode, simple_query_input, simple_vocal_language, *args):
+        """Wrapper that selects the appropriate DiT handler based on model selection"""
+        # Convert args to list for modification
+        args_list = list(args)
+        
+        # args order (after simple mode params): 
+        # captions (0), lyrics (1), bpm (2), key_scale (3), time_signature (4), vocal_language (5),
+        # inference_steps (6), guidance_scale (7), random_seed_checkbox (8), seed (9),
+        # reference_audio (10), audio_duration (11), batch_size_input (12), src_audio (13),
+        # text2music_audio_code_string (14), repainting_start (15), repainting_end (16),
+        # instruction_display_gen (17), audio_cover_strength (18), task_type (19), ...
+        # ... lm_temperature (27), think_checkbox (28), ...
+        # ... instrumental_checkbox (at position after all regular params)
+        
+        src_audio = args_list[13] if len(args_list) > 13 else None
+        task_type = args_list[19] if len(args_list) > 19 else "text2music"
+        
+        # Validate: Cover and Repaint modes require source audio
+        if task_type in ["cover", "repaint"] and src_audio is None:
+            raise gr.Error(f"Source Audio is required for {task_type.capitalize()} mode. Please upload an audio file.")
+        
+        # Handle Simple mode: first create sample, then generate
+        if generation_mode == "simple":
+            # Get instrumental from the main checkbox (args[-6] based on input order)
+            # The instrumental_checkbox is passed after all the regular generation params
+            instrumental = args_list[-6] if len(args_list) > 6 else False  # instrumental_checkbox position
+            lm_temperature = args_list[27] if len(args_list) > 27 else 0.85
+            lm_top_k = args_list[30] if len(args_list) > 30 else 0
+            lm_top_p = args_list[31] if len(args_list) > 31 else 0.9
+            constrained_decoding_debug = args_list[38] if len(args_list) > 38 else False
+            
+            # Call create_sample to generate caption/lyrics/metadata
+            from acestep.inference import create_sample
+            
+            top_k_value = None if not lm_top_k or lm_top_k == 0 else int(lm_top_k)
+            top_p_value = None if not lm_top_p or lm_top_p >= 1.0 else lm_top_p
+            
+            result = create_sample(
+                llm_handler=llm_handler,
+                query=simple_query_input,
+                instrumental=instrumental,
+                vocal_language=simple_vocal_language,
+                temperature=lm_temperature,
+                top_k=top_k_value,
+                top_p=top_p_value,
+                use_constrained_decoding=True,
+                constrained_decoding_debug=constrained_decoding_debug,
+            )
+            
+            if not result.success:
+                raise gr.Error(f"Failed to create sample: {result.status_message}")
+            
+            # Update args with generated data
+            args_list[0] = result.caption  # captions
+            args_list[1] = result.lyrics  # lyrics
+            args_list[2] = result.bpm  # bpm
+            args_list[3] = result.keyscale  # key_scale
+            args_list[4] = result.timesignature  # time_signature
+            args_list[5] = result.language  # vocal_language
+            if result.duration and result.duration > 0:
+                args_list[11] = result.duration  # audio_duration
+            # Enable thinking for Simple mode
+            args_list[28] = True  # think_checkbox
+        
+        # Determine which handler to use
+        active_handler = dit_handler  # Default to primary handler
+        if dit_handler_2 is not None and selected_model == config_path_2:
+            active_handler = dit_handler_2
+        yield from res_h.generate_with_batch_management(active_handler, llm_handler, *args_list)
+    
     # ========== Generation Handler ==========
     generation_section["generate_btn"].click(
         fn=generation_wrapper,
         inputs=[
+            generation_section["dit_model_selector"],  # Model selection input
+            generation_section["generation_mode"],  # For Simple mode detection
+            generation_section["simple_query_input"],  # Simple mode query
+            generation_section["simple_vocal_language"],  # Simple mode vocal language
             generation_section["captions"],
             generation_section["lyrics"],
             generation_section["bpm"],
@@ -634,8 +804,12 @@ def setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, datase
             results_section["restore_params_btn"],
         ]
     ).then(
-        fn=lambda *args: res_h.generate_next_batch_background(dit_handler, llm_handler, *args),
+        fn=lambda selected_model, *args: res_h.generate_next_batch_background(
+            dit_handler_2 if (dit_handler_2 is not None and selected_model == config_path_2) else dit_handler,
+            llm_handler, *args
+        ),
         inputs=[
+            generation_section["dit_model_selector"],  # Model selection input
             generation_section["autogen_checkbox"],
             results_section["generation_params_state"],
             results_section["current_batch_index"],
@@ -819,8 +993,12 @@ def setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, datase
             results_section["restore_params_btn"],
         ]
     ).then(
-        fn=lambda *args: res_h.generate_next_batch_background(dit_handler, llm_handler, *args),
+        fn=lambda selected_model, *args: res_h.generate_next_batch_background(
+            dit_handler_2 if (dit_handler_2 is not None and selected_model == config_path_2) else dit_handler,
+            llm_handler, *args
+        ),
         inputs=[
+            generation_section["dit_model_selector"],  # Model selection input
             generation_section["autogen_checkbox"],
             results_section["generation_params_state"],
             results_section["current_batch_index"],

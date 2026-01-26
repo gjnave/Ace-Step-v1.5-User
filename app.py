@@ -53,7 +53,24 @@ def get_persistent_storage_path():
     1. Must be enabled in Space settings
     2. Path is typically /data for Docker SDK
     3. Falls back to app directory if /data is not writable
+    
+    Local development:
+    - Set CHECKPOINT_DIR environment variable to use local checkpoints
+      Example: CHECKPOINT_DIR=/path/to/checkpoints python app.py
+      The path should be the parent directory of 'checkpoints' folder
     """
+    # Check for local checkpoint directory override (for development)
+    checkpoint_dir_override = os.environ.get("CHECKPOINT_DIR")
+    if checkpoint_dir_override:
+        # If user specifies the checkpoints folder directly, use its parent
+        if checkpoint_dir_override.endswith("/checkpoints") or checkpoint_dir_override.endswith("\\checkpoints"):
+            checkpoint_dir_override = os.path.dirname(checkpoint_dir_override)
+        if os.path.exists(checkpoint_dir_override):
+            print(f"Using local checkpoint directory (CHECKPOINT_DIR): {checkpoint_dir_override}")
+            return checkpoint_dir_override
+        else:
+            print(f"Warning: CHECKPOINT_DIR path does not exist: {checkpoint_dir_override}")
+    
     # Try HuggingFace Space persistent storage first
     hf_data_path = "/data"
     
@@ -80,6 +97,14 @@ def get_persistent_storage_path():
 def main():
     """Main entry point for HuggingFace Space"""
     
+    # Check for DEBUG_UI mode (skip model initialization for UI development)
+    debug_ui = os.environ.get("DEBUG_UI", "").lower() in ("1", "true", "yes")
+    if debug_ui:
+        print("=" * 60)
+        print("DEBUG_UI mode enabled - skipping model initialization")
+        print("UI will be fully functional but generation is disabled")
+        print("=" * 60)
+    
     # Get persistent storage path (auto-detect)
     persistent_storage_path = get_persistent_storage_path()
     
@@ -87,14 +112,15 @@ def main():
     gpu_memory_gb = get_gpu_memory_gb()
     auto_offload = gpu_memory_gb > 0 and gpu_memory_gb < 16
     
-    if auto_offload:
-        print(f"Detected GPU memory: {gpu_memory_gb:.2f} GB (< 16GB)")
-        print("Auto-enabling CPU offload to reduce GPU memory usage")
-    elif gpu_memory_gb > 0:
-        print(f"Detected GPU memory: {gpu_memory_gb:.2f} GB (>= 16GB)")
-        print("CPU offload disabled by default")
-    else:
-        print("No GPU detected, running on CPU")
+    if not debug_ui:
+        if auto_offload:
+            print(f"Detected GPU memory: {gpu_memory_gb:.2f} GB (< 16GB)")
+            print("Auto-enabling CPU offload to reduce GPU memory usage")
+        elif gpu_memory_gb > 0:
+            print(f"Detected GPU memory: {gpu_memory_gb:.2f} GB (>= 16GB)")
+            print("CPU offload disabled by default")
+        else:
+            print("No GPU detected, running on CPU")
     
     # Create handler instances
     print("Creating handlers...")
@@ -107,6 +133,9 @@ def main():
         "SERVICE_MODE_DIT_MODEL",
         "acestep-v15-turbo"
     )
+    # Second DiT model - default to turbo-shift3 for two-model setup
+    config_path_2 = os.environ.get("SERVICE_MODE_DIT_MODEL_2", "acestep-v15-turbo-shift3").strip()
+    
     lm_model_path = os.environ.get(
         "SERVICE_MODE_LM_MODEL",
         "acestep-5Hz-lm-1.7B"
@@ -115,50 +144,97 @@ def main():
     device = "auto"
     
     print(f"Service mode configuration:")
-    print(f"  DiT model: {config_path}")
+    print(f"  DiT model 1: {config_path}")
+    if config_path_2:
+        print(f"  DiT model 2: {config_path_2}")
     print(f"  LM model: {lm_model_path}")
     print(f"  Backend: {backend}")
     print(f"  Offload to CPU: {auto_offload}")
+    print(f"  DEBUG_UI: {debug_ui}")
     
     # Determine flash attention availability
     use_flash_attention = dit_handler.is_flash_attention_available()
     print(f"  Flash Attention: {use_flash_attention}")
     
-    # Initialize DiT model
-    print(f"Initializing DiT model: {config_path}...")
-    init_status, enable_generate = dit_handler.initialize_service(
-        project_root=current_dir,
-        config_path=config_path,
-        device=device,
-        use_flash_attention=use_flash_attention,
-        compile_model=False,
-        offload_to_cpu=auto_offload,
-        offload_dit_to_cpu=False
-    )
+    # Initialize models (skip in DEBUG_UI mode)
+    init_status = ""
+    enable_generate = False
+    dit_handler_2 = None
     
-    if not enable_generate:
-        print(f"Warning: DiT model initialization issue: {init_status}", file=sys.stderr)
+    if debug_ui:
+        # In DEBUG_UI mode, skip all model initialization
+        init_status = "⚠️ DEBUG_UI mode - models not loaded\nUI is functional but generation is disabled"
+        enable_generate = False
+        print("Skipping model initialization (DEBUG_UI mode)")
     else:
-        print("DiT model initialized successfully")
+        # Initialize primary DiT model
+        print(f"Initializing DiT model 1: {config_path}...")
+        init_status, enable_generate = dit_handler.initialize_service(
+            project_root=current_dir,
+            config_path=config_path,
+            device=device,
+            use_flash_attention=use_flash_attention,
+            compile_model=False,
+            offload_to_cpu=auto_offload,
+            offload_dit_to_cpu=False
+        )
+        
+        if not enable_generate:
+            print(f"Warning: DiT model 1 initialization issue: {init_status}", file=sys.stderr)
+        else:
+            print("DiT model 1 initialized successfully")
+        
+        # Initialize second DiT model if configured
+        if config_path_2:
+            print(f"Initializing DiT model 2: {config_path_2}...")
+            dit_handler_2 = AceStepHandler(persistent_storage_path=persistent_storage_path)
+            
+            # Share VAE, text_encoder, and silence_latent from the first handler to save memory
+            init_status_2, enable_generate_2 = dit_handler_2.initialize_service(
+                project_root=current_dir,
+                config_path=config_path_2,
+                device=device,
+                use_flash_attention=use_flash_attention,
+                compile_model=False,
+                offload_to_cpu=auto_offload,
+                offload_dit_to_cpu=False,
+                # Share components from first handler
+                shared_vae=dit_handler.vae,
+                shared_text_encoder=dit_handler.text_encoder,
+                shared_text_tokenizer=dit_handler.text_tokenizer,
+                shared_silence_latent=dit_handler.silence_latent,
+            )
+            
+            if not enable_generate_2:
+                print(f"Warning: DiT model 2 initialization issue: {init_status_2}", file=sys.stderr)
+                init_status += f"\n⚠️ DiT model 2 failed: {init_status_2}"
+            else:
+                print("DiT model 2 initialized successfully")
+                init_status += f"\n✅ DiT model 2: {config_path_2}"
+        
+        # Initialize LM model
+        checkpoint_dir = dit_handler._get_checkpoint_dir()
+        print(f"Initializing 5Hz LM: {lm_model_path}...")
+        lm_status, lm_success = llm_handler.initialize(
+            checkpoint_dir=checkpoint_dir,
+            lm_model_path=lm_model_path,
+            backend=backend,
+            device=device,
+            offload_to_cpu=auto_offload,
+            dtype=dit_handler.dtype
+        )
+        
+        if lm_success:
+            print("5Hz LM initialized successfully")
+            init_status += f"\n{lm_status}"
+        else:
+            print(f"Warning: 5Hz LM initialization failed: {lm_status}", file=sys.stderr)
+            init_status += f"\n{lm_status}"
     
-    # Initialize LM model
-    checkpoint_dir = dit_handler._get_checkpoint_dir()
-    print(f"Initializing 5Hz LM: {lm_model_path}...")
-    lm_status, lm_success = llm_handler.initialize(
-        checkpoint_dir=checkpoint_dir,
-        lm_model_path=lm_model_path,
-        backend=backend,
-        device=device,
-        offload_to_cpu=auto_offload,
-        dtype=dit_handler.dtype
-    )
-    
-    if lm_success:
-        print("5Hz LM initialized successfully")
-        init_status += f"\n{lm_status}"
-    else:
-        print(f"Warning: 5Hz LM initialization failed: {lm_status}", file=sys.stderr)
-        init_status += f"\n{lm_status}"
+    # Build available models list for UI
+    available_dit_models = [config_path]
+    if config_path_2 and dit_handler_2 is not None:
+        available_dit_models.append(config_path_2)
     
     # Prepare initialization parameters for UI
     init_params = {
@@ -166,6 +242,7 @@ def main():
         'service_mode': True,
         'checkpoint': None,
         'config_path': config_path,
+        'config_path_2': config_path_2 if config_path_2 else None,
         'device': device,
         'init_llm': True,
         'lm_model_path': lm_model_path,
@@ -176,9 +253,12 @@ def main():
         'init_status': init_status,
         'enable_generate': enable_generate,
         'dit_handler': dit_handler,
+        'dit_handler_2': dit_handler_2,
+        'available_dit_models': available_dit_models,
         'llm_handler': llm_handler,
         'language': 'en',
         'persistent_storage_path': persistent_storage_path,
+        'debug_ui': debug_ui,
     }
     
     print("Service initialization completed!")
