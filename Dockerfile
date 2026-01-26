@@ -44,7 +44,7 @@ USER user
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Install nano-vllm with --no-deps since all dependencies are already installed
-RUN pip install ./acestep/third_parts/nano-vllm
+RUN pip install --no-deps ./acestep/third_parts/nano-vllm
 
 # Copy the rest of the application
 COPY --chown=user:user . .

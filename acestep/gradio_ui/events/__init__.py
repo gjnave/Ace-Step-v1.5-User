@@ -286,6 +286,7 @@ def setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, datase
             generation_section["simple_sample_created"],
             generation_section["src_audio_group"],
             generation_section["audio_cover_strength"],
+            generation_section["think_checkbox"],  # Disable thinking for cover/repaint modes
         ]
     )
     
@@ -680,6 +681,8 @@ def setup_event_handlers(demo, dit_handler, llm_handler, dataset_handler, datase
                 args_list[11] = result.duration  # audio_duration
             # Enable thinking for Simple mode
             args_list[28] = True  # think_checkbox
+            # Mark as formatted caption (LM-generated sample)
+            args_list[36] = True  # is_format_caption_state
         
         # Determine which handler to use
         active_handler = dit_handler  # Default to primary handler

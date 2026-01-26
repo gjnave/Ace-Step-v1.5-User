@@ -710,6 +710,7 @@ def handle_generation_mode_change(mode: str):
         - simple_sample_created (reset state)
         - src_audio_group (visibility) - shown for cover and repaint
         - audio_cover_strength (visibility) - shown only for cover mode
+        - think_checkbox (value and interactive) - disabled for cover/repaint modes
     """
     is_simple = mode == "simple"
     is_custom = mode == "custom"
@@ -725,6 +726,13 @@ def handle_generation_mode_change(mode: str):
     }
     task_type_value = task_type_map.get(mode, "text2music")
     
+    # think_checkbox: disabled and set to False for cover/repaint modes
+    # (these modes don't use LM thinking, they use source audio codes)
+    if is_cover or is_repaint:
+        think_checkbox_update = gr.update(value=False, interactive=False)
+    else:
+        think_checkbox_update = gr.update(value=True, interactive=True)
+    
     return (
         gr.update(visible=is_simple),  # simple_mode_group
         gr.update(visible=not is_simple),  # custom_mode_content - visible for custom/cover/repaint
@@ -735,6 +743,7 @@ def handle_generation_mode_change(mode: str):
         False,  # simple_sample_created - reset to False on mode change
         gr.update(visible=is_cover or is_repaint),  # src_audio_group - shown for cover and repaint
         gr.update(visible=is_cover),  # audio_cover_strength - only shown for cover mode
+        think_checkbox_update,  # think_checkbox - disabled for cover/repaint modes
     )
 
 
