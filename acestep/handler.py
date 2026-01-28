@@ -1068,11 +1068,9 @@ class AceStepHandler:
     
     def _load_audio_file(self, audio_file) -> Tuple[torch.Tensor, int]:
         """
-        Load audio file using torchaudio.
+        Load audio file with ffmpeg backend, fallback to soundfile if failed.
         
-        Note: TORCHAUDIO_USE_TORCHCODEC=0 is set at module level to disable
-        torchcodec backend and avoid CUDA dependency issues on HuggingFace Space.
-        This makes torchaudio use ffmpeg backend by default.
+        This handles CUDA dependency issues with torchcodec on HuggingFace Space.
         
         Args:
             audio_file: Path to the audio file
@@ -1082,14 +1080,34 @@ class AceStepHandler:
             
         Raises:
             FileNotFoundError: If the audio file doesn't exist
+            Exception: If all methods fail to load the audio
         """
         # Check if file exists first
         if not os.path.exists(audio_file):
             raise FileNotFoundError(f"Audio file not found: {audio_file}")
         
-        # Load audio using default backend (ffmpeg, since torchcodec is disabled)
-        audio, sr = torchaudio.load(audio_file)
-        return audio, sr
+        # Try torchaudio with explicit ffmpeg backend first
+        try:
+            audio, sr = torchaudio.load(audio_file, backend="ffmpeg")
+            return audio, sr
+        except Exception as e:
+            logger.debug(f"[_load_audio_file] ffmpeg backend failed: {e}, trying soundfile fallback")
+        
+        # Fallback: use soundfile directly (most compatible)
+        try:
+            audio_np, sr = sf.read(audio_file)
+            # soundfile returns [samples, channels] or [samples], convert to [channels, samples]
+            audio = torch.from_numpy(audio_np).float()
+            if audio.dim() == 1:
+                # Mono: [samples] -> [1, samples]
+                audio = audio.unsqueeze(0)
+            else:
+                # Stereo: [samples, channels] -> [channels, samples]
+                audio = audio.T
+            return audio, sr
+        except Exception as e:
+            logger.error(f"[_load_audio_file] All methods failed to load audio: {audio_file}, error: {e}")
+            raise
     
     def _normalize_audio_to_stereo_48k(self, audio: torch.Tensor, sr: int) -> torch.Tensor:
         """
