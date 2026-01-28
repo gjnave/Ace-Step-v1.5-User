@@ -480,11 +480,12 @@ def create_results_section(dit_handler) -> dict:
             visible=False
         )
         
-        with gr.Accordion(t("results.batch_results_title"), open=False):
+        with gr.Accordion(t("results.batch_results_title"), open=True):
             generated_audio_batch = gr.File(
                 label=t("results.all_files_label"),
                 file_count="multiple",
-                interactive=False
+                interactive=False,
+                visible=False
             )
             generation_info = gr.Markdown(label=t("results.generation_details"))
     
