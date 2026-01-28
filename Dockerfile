@@ -5,10 +5,12 @@ FROM python:3.11-slim
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive
+    DEBIAN_FRONTEND=noninteractive \
+    TORCHAUDIO_USE_TORCHCODEC=0
 
 # Install system dependencies
 # build-essential is required for triton to compile CUDA kernels
+# ffmpeg is required for torchaudio ffmpeg backend (audio loading/saving)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     ffmpeg \

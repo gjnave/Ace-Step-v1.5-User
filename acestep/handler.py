@@ -7,6 +7,10 @@ import os
 # Disable tokenizers parallelism to avoid fork warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+# Disable torchcodec backend to avoid CUDA dependency issues on HuggingFace Space
+# This forces torchaudio to use ffmpeg/sox/soundfile backends instead
+os.environ["TORCHAUDIO_USE_TORCHCODEC"] = "0"
+
 import math
 from copy import deepcopy
 import tempfile
@@ -1064,11 +1068,11 @@ class AceStepHandler:
     
     def _load_audio_file(self, audio_file) -> Tuple[torch.Tensor, int]:
         """
-        Load audio file with fallback backends for compatibility.
+        Load audio file using torchaudio.
         
-        In HuggingFace Space environment, the default torchcodec backend may fail
-        due to missing CUDA dependencies (libnppicc.so.12). This method tries
-        ffmpeg backend first (fast), then sox, then soundfile as fallbacks.
+        Note: TORCHAUDIO_USE_TORCHCODEC=0 is set at module level to disable
+        torchcodec backend and avoid CUDA dependency issues on HuggingFace Space.
+        This makes torchaudio use ffmpeg backend by default.
         
         Args:
             audio_file: Path to the audio file
@@ -1078,33 +1082,14 @@ class AceStepHandler:
             
         Raises:
             FileNotFoundError: If the audio file doesn't exist
-            Exception: If all backends fail to load the audio
         """
         # Check if file exists first
         if not os.path.exists(audio_file):
             raise FileNotFoundError(f"Audio file not found: {audio_file}")
         
-        # Try ffmpeg backend first (fast and compatible)
-        try:
-            audio, sr = torchaudio.load(audio_file, backend="ffmpeg")
-            return audio, sr
-        except Exception as e:
-            logger.debug(f"[_load_audio_file] ffmpeg backend failed: {e}, trying sox backend")
-        
-        # Try sox backend as second option
-        try:
-            audio, sr = torchaudio.load(audio_file, backend="sox")
-            return audio, sr
-        except Exception as e:
-            logger.debug(f"[_load_audio_file] sox backend failed: {e}, trying soundfile backend")
-        
-        # Try soundfile backend as last resort
-        try:
-            audio, sr = torchaudio.load(audio_file, backend="soundfile")
-            return audio, sr
-        except Exception as e:
-            logger.error(f"[_load_audio_file] All backends failed to load audio: {audio_file}")
-            raise
+        # Load audio using default backend (ffmpeg, since torchcodec is disabled)
+        audio, sr = torchaudio.load(audio_file)
+        return audio, sr
     
     def _normalize_audio_to_stereo_48k(self, audio: torch.Tensor, sr: int) -> torch.Tensor:
         """
