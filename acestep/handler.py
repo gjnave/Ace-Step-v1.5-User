@@ -117,25 +117,45 @@ class AceStepHandler:
         models.sort()
         return models
 
+    # Model name to HuggingFace repository mapping
+    # Models in the same repo will be downloaded together
+    MODEL_REPO_MAPPING = {
+        # Main unified repository (contains acestep-v15-turbo, LM models, VAE, text encoder)
+        "acestep-v15-turbo": "ACE-Step/Ace-Step1.5",
+        "acestep-5Hz-lm-0.6B": "ACE-Step/Ace-Step1.5",
+        "acestep-5Hz-lm-1.7B": "ACE-Step/Ace-Step1.5",
+        "vae": "ACE-Step/Ace-Step1.5",
+        "Qwen3-Embedding-0.6B": "ACE-Step/Ace-Step1.5",
+        
+        # Separate model repositories
+        "acestep-v15-base": "ACE-Step/acestep-v15-base",
+        "acestep-v15-sft": "ACE-Step/acestep-v15-sft",
+        "acestep-v15-turbo-shift3": "ACE-Step/acestep-v15-turbo-shift3",
+    }
+    
+    # Default fallback repository for unknown models
+    DEFAULT_REPO_ID = "ACE-Step/Ace-Step1.5"
+
     def _ensure_model_downloaded(self, model_name: str, checkpoint_dir: str) -> str:
         """
         Ensure model is downloaded from HuggingFace Hub.
         Used for HuggingFace Space auto-download support.
 
-        Downloads the unified ACE-Step/Ace-Step1.5 repository which contains
-        both acestep-v15-turbo and acestep-5Hz-lm-1.7B models.
+        Supports multiple repositories:
+        - Models in MODEL_REPO_MAPPING will be downloaded from their specific repo
+        - Unknown models will try the DEFAULT_REPO_ID
+        
+        For separate model repos (acestep-v15-base, acestep-v15-sft, acestep-v15-turbo-shift3),
+        downloads directly into the model subdirectory.
 
         Args:
-            model_name: Model directory name (e.g., "acestep-v15-turbo")
+            model_name: Model directory name (e.g., "acestep-v15-turbo", "acestep-v15-turbo-shift3")
             checkpoint_dir: Target checkpoint directory
 
         Returns:
             Path to the downloaded model
         """
         from huggingface_hub import snapshot_download
-
-        # Unified repository containing all models
-        REPO_ID = "ACE-Step/Ace-Step1.5"
 
         model_path = os.path.join(checkpoint_dir, model_name)
 
@@ -144,18 +164,33 @@ class AceStepHandler:
             logger.info(f"Model {model_name} already exists at {model_path}")
             return model_path
 
-        # Download the entire repository to checkpoint_dir
-        logger.info(f"Downloading {REPO_ID} to {checkpoint_dir}...")
+        # Get repository ID for this model
+        repo_id = self.MODEL_REPO_MAPPING.get(model_name, self.DEFAULT_REPO_ID)
+        
+        # Determine if this is a unified repo or a separate model repo
+        is_unified_repo = repo_id == self.DEFAULT_REPO_ID or repo_id == "ACE-Step/Ace-Step1.5"
+        
+        if is_unified_repo:
+            # Unified repo: download entire repo to checkpoint_dir
+            # The model will be in checkpoint_dir/model_name
+            download_dir = checkpoint_dir
+            logger.info(f"Downloading unified repository {repo_id} to {download_dir}...")
+        else:
+            # Separate model repo: download directly to model_path
+            # The repo contains the model files directly, not in a subdirectory
+            download_dir = model_path
+            os.makedirs(download_dir, exist_ok=True)
+            logger.info(f"Downloading model {model_name} from {repo_id} to {download_dir}...")
 
         try:
             snapshot_download(
-                repo_id=REPO_ID,
-                local_dir=checkpoint_dir,
+                repo_id=repo_id,
+                local_dir=download_dir,
                 local_dir_use_symlinks=False,
             )
-            logger.info(f"Repository {REPO_ID} downloaded successfully")
+            logger.info(f"Repository {repo_id} downloaded successfully to {download_dir}")
         except Exception as e:
-            logger.error(f"Failed to download repository {REPO_ID}: {e}")
+            logger.error(f"Failed to download repository {repo_id}: {e}")
             raise
 
         return model_path
