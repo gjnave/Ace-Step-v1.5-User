@@ -10,11 +10,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Install system dependencies
 # build-essential is required for triton to compile CUDA kernels
-# ffmpeg is installed WITHOUT --no-install-recommends to ensure all shared libraries
-# (libavcodec, libavformat, libavutil, libswresample) are installed for torchaudio
+# ffmpeg and libav* dev packages are required for torchaudio's ffmpeg backend
+# Note: torchaudio's ffmpeg backend needs shared libraries, not just the ffmpeg binary
 RUN apt-get update && \
     apt-get install -y --no-install-recommends git libsndfile1 build-essential && \
-    apt-get install -y ffmpeg && \
+    apt-get install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswresample-dev && \
     rm -rf /var/lib/apt/lists/*
 
 # Set up a new user named "user" with user ID 1000 (HuggingFace Space requirement)
