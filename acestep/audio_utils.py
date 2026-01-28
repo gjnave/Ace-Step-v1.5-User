@@ -128,6 +128,52 @@ class AudioSaver:
                 logger.error(f"[AudioSaver] Failed to save audio: {e}")
                 raise
     
+    def _load_audio_file(self, audio_file: Union[str, Path]) -> Tuple[torch.Tensor, int]:
+        """
+        Load audio file with fallback backends for compatibility.
+        
+        In HuggingFace Space environment, the default torchcodec backend may fail
+        due to missing CUDA dependencies (libnppicc.so.12). This method tries
+        ffmpeg backend first (fast), then sox, then soundfile as fallbacks.
+        
+        Args:
+            audio_file: Path to the audio file
+            
+        Returns:
+            Tuple of (audio_tensor, sample_rate)
+            
+        Raises:
+            FileNotFoundError: If the audio file doesn't exist
+            Exception: If all backends fail to load the audio
+        """
+        audio_file = str(audio_file)
+        
+        # Check if file exists first
+        if not Path(audio_file).exists():
+            raise FileNotFoundError(f"Audio file not found: {audio_file}")
+        
+        # Try ffmpeg backend first (fast and compatible)
+        try:
+            audio, sr = torchaudio.load(audio_file, backend="ffmpeg")
+            return audio, sr
+        except Exception as e:
+            logger.debug(f"[AudioSaver._load_audio_file] ffmpeg backend failed: {e}, trying sox backend")
+        
+        # Try sox backend as second option
+        try:
+            audio, sr = torchaudio.load(audio_file, backend="sox")
+            return audio, sr
+        except Exception as e:
+            logger.debug(f"[AudioSaver._load_audio_file] sox backend failed: {e}, trying soundfile backend")
+        
+        # Try soundfile backend as last resort
+        try:
+            audio, sr = torchaudio.load(audio_file, backend="soundfile")
+            return audio, sr
+        except Exception as e:
+            logger.error(f"[AudioSaver._load_audio_file] All backends failed to load audio: {audio_file}")
+            raise
+    
     def convert_audio(
         self,
         input_path: Union[str, Path],
@@ -153,8 +199,8 @@ class AudioSaver:
         if not input_path.exists():
             raise FileNotFoundError(f"Input file not found: {input_path}")
         
-        # Load audio
-        audio_tensor, sample_rate = torchaudio.load(str(input_path))
+        # Load audio with fallback backends
+        audio_tensor, sample_rate = self._load_audio_file(input_path)
         
         # Save as new format
         output_path = self.save_audio(

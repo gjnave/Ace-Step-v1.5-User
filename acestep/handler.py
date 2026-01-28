@@ -1062,6 +1062,50 @@ class AceStepHandler:
             instruction = instruction + ":"
         return instruction
     
+    def _load_audio_file(self, audio_file) -> Tuple[torch.Tensor, int]:
+        """
+        Load audio file with fallback backends for compatibility.
+        
+        In HuggingFace Space environment, the default torchcodec backend may fail
+        due to missing CUDA dependencies (libnppicc.so.12). This method tries
+        ffmpeg backend first (fast), then sox, then soundfile as fallbacks.
+        
+        Args:
+            audio_file: Path to the audio file
+            
+        Returns:
+            Tuple of (audio_tensor, sample_rate)
+            
+        Raises:
+            FileNotFoundError: If the audio file doesn't exist
+            Exception: If all backends fail to load the audio
+        """
+        # Check if file exists first
+        if not os.path.exists(audio_file):
+            raise FileNotFoundError(f"Audio file not found: {audio_file}")
+        
+        # Try ffmpeg backend first (fast and compatible)
+        try:
+            audio, sr = torchaudio.load(audio_file, backend="ffmpeg")
+            return audio, sr
+        except Exception as e:
+            logger.debug(f"[_load_audio_file] ffmpeg backend failed: {e}, trying sox backend")
+        
+        # Try sox backend as second option
+        try:
+            audio, sr = torchaudio.load(audio_file, backend="sox")
+            return audio, sr
+        except Exception as e:
+            logger.debug(f"[_load_audio_file] sox backend failed: {e}, trying soundfile backend")
+        
+        # Try soundfile backend as last resort
+        try:
+            audio, sr = torchaudio.load(audio_file, backend="soundfile")
+            return audio, sr
+        except Exception as e:
+            logger.error(f"[_load_audio_file] All backends failed to load audio: {audio_file}")
+            raise
+    
     def _normalize_audio_to_stereo_48k(self, audio: torch.Tensor, sr: int) -> torch.Tensor:
         """
         Normalize audio to stereo 48kHz format.
@@ -1277,8 +1321,8 @@ class AceStepHandler:
             return None
             
         try:
-            # Load audio file
-            audio, sr = torchaudio.load(audio_file)
+            # Load audio file with fallback backends
+            audio, sr = self._load_audio_file(audio_file)
             
             logger.debug(f"[process_reference_audio] Reference audio shape: {audio.shape}")
             logger.debug(f"[process_reference_audio] Reference audio sample rate: {sr}")
@@ -1332,8 +1376,8 @@ class AceStepHandler:
             return None
             
         try:
-            # Load audio file
-            audio, sr = torchaudio.load(audio_file)
+            # Load audio file with fallback backends
+            audio, sr = self._load_audio_file(audio_file)
             
             # Normalize to stereo 48kHz
             audio = self._normalize_audio_to_stereo_48k(audio, sr)
