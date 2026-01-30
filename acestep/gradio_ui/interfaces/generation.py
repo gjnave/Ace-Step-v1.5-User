@@ -216,7 +216,7 @@ def create_generation_section(dit_handler, llm_handler, init_params=None, langua
                 with gr.Column(scale=1, min_width=60):
                     random_desc_btn = gr.Button(
                         "🎲",
-                        variant="secondary",
+                        variant="primary",
                         size="lg",
                     )
             
@@ -300,7 +300,7 @@ def create_generation_section(dit_handler, llm_handler, init_params=None, langua
                 with gr.Column(scale=1, min_width=60):
                     sample_btn = gr.Button(
                         "🎲",
-                        variant="secondary",
+                        variant="primary",
                         size="lg",
                     )
         
