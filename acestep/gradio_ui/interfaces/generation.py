@@ -383,6 +383,7 @@ def create_generation_section(dit_handler, llm_handler, init_params=None, langua
                     maximum=8,
                     step=1,
                     scale=1,
+                    interactive=False,
                 )
                 
             # Row 1: DiT Inference Steps, Seed, Audio Format

@@ -275,7 +275,7 @@ def main():
     
     # Enable queue for multi-user support
     print("Enabling queue for multi-user support...")
-    demo.queue(max_size=20)
+    demo.queue(max_size=20, default_concurrency_limit=1)
     
     # Launch
     print("Launching server on 0.0.0.0:7860...")
