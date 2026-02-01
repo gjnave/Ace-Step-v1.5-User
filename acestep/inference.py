@@ -447,6 +447,7 @@ def generate_music(
                     negative_prompt=params.lm_negative_prompt,
                     top_k=top_k_value,
                     top_p=top_p_value,
+                    target_duration=audio_duration,  # Pass duration to limit audio codes generation
                     user_metadata=user_metadata_to_pass,
                     use_cot_caption=params.use_cot_caption,
                     use_cot_language=params.use_cot_language,

@@ -364,7 +364,7 @@ def create_generation_section(dit_handler, llm_handler, init_params=None, langua
                     minimum=-1,
                     maximum=600.0,
                     step=1,
-                    info="Use -1 for random",
+                    info="Use -1 for auto, or 10-600 seconds",
                     scale=1,
                 )
                 vocal_language = gr.Dropdown(

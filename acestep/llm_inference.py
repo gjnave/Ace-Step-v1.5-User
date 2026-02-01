@@ -474,8 +474,20 @@ class LLMHandler:
             codes_temperature=codes_temperature,
         )
 
+        # Calculate max_tokens based on target_duration if specified
+        # 5 audio codes = 1 second, plus ~500 tokens for CoT metadata and safety margin
+        if target_duration is not None and target_duration > 0:
+            # Ensure duration is within valid range (10-600 seconds)
+            effective_duration = max(10, min(600, target_duration))
+            max_tokens = int(effective_duration * 5) + 500
+            # Cap at model's max length
+            max_tokens = min(max_tokens, self.max_model_len - 64)
+        else:
+            # No duration constraint - use default (model will stop at EOS naturally)
+            max_tokens = self.max_model_len - 64
+
         sampling_params = SamplingParams(
-            max_tokens=self.max_model_len - 64,
+            max_tokens=max_tokens,
             temperature=effective_sampler_temp,
             cfg_scale=cfg_scale,
             top_k=top_k,
@@ -566,7 +578,17 @@ class LLMHandler:
 
         with self._load_model_context():
             inputs = {k: v.to(self.device) for k, v in inputs.items()}
-            max_new_tokens = getattr(self.llm.config, "max_new_tokens", 4096)
+            
+            # Calculate max_new_tokens based on target_duration if specified
+            # 5 audio codes = 1 second, plus ~500 tokens for CoT metadata and safety margin
+            if target_duration is not None and target_duration > 0:
+                # Ensure duration is within valid range (10-600 seconds)
+                effective_duration = max(10, min(600, target_duration))
+                max_new_tokens = int(effective_duration * 5) + 500
+            else:
+                max_new_tokens = getattr(self.llm.config, "max_new_tokens", 4096)
+            
+            # Cap at model's max length
             if hasattr(self, "max_model_len"):
                 max_new_tokens = min(max_new_tokens, self.max_model_len - 64)
 
@@ -1927,6 +1949,18 @@ class LLMHandler:
             return output_text, f"✅ Generated successfully (pt) | length={len(output_text)}"
 
         except Exception as e:
+            # Reset nano-vllm state on error to prevent stale context from causing
+            # subsequent CUDA illegal memory access errors
+            if self.llm_backend == "vllm":
+                try:
+                    from nanovllm.utils.context import reset_context
+                    reset_context()
+                except ImportError:
+                    pass
+            # Clear CUDA cache to release any corrupted memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
             return "", f"❌ Error generating from formatted prompt: {e}"
     
     def _generate_with_constrained_decoding(
