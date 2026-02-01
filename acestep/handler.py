@@ -765,6 +765,9 @@ class AceStepHandler:
             # Normalize to stereo 48kHz
             audio = self._normalize_audio_to_stereo_48k(audio, sr)
             
+            # Enforce duration limits (10-600 seconds)
+            audio = self._enforce_audio_duration_limits(audio)
+            
             return audio
         except Exception as e:
             logger.exception("[process_target_audio] Error processing target audio")
@@ -791,25 +794,48 @@ class AceStepHandler:
         if len(code_ids) == 0:
             return None
         
-        with self._load_model_context("model"):
-            quantizer = self.model.tokenizer.quantizer
-            detokenizer = self.model.detokenizer
-            
-            num_quantizers = getattr(quantizer, "num_quantizers", 1)
-            # Create indices tensor: [T_5Hz]
-            indices = torch.tensor(code_ids, device=self.device, dtype=torch.long)  # [T_5Hz]
-            
-            indices = indices.unsqueeze(0).unsqueeze(-1)  # [1, T_5Hz, 1]
-            
-            # Get quantized representation from indices
-            # The quantizer expects [batch, T_5Hz] format and handles quantizer dimension internally
-            quantized = quantizer.get_output_from_indices(indices)
-            if quantized.dtype != self.dtype:
-                quantized = quantized.to(self.dtype)
-            
-            # Detokenize to 25Hz: [1, T_5Hz, dim] -> [1, T_25Hz, dim]
-            lm_hints_25hz = detokenizer(quantized)
-            return lm_hints_25hz
+        try:
+            with self._load_model_context("model"):
+                quantizer = self.model.tokenizer.quantizer
+                detokenizer = self.model.detokenizer
+                
+                # Get codebook size for validation
+                codebook_size = getattr(quantizer, 'codebook_size', 65536)
+                if hasattr(quantizer, 'quantizers') and len(quantizer.quantizers) > 0:
+                    codebook_size = getattr(quantizer.quantizers[0], 'codebook_size', codebook_size)
+                
+                # Validate code IDs are within valid range
+                invalid_codes = [c for c in code_ids if c < 0 or c >= codebook_size]
+                if invalid_codes:
+                    logger.warning(f"[_decode_audio_codes_to_latents] Found {len(invalid_codes)} invalid codes out of range [0, {codebook_size}): {invalid_codes[:5]}...")
+                    # Clamp invalid codes to valid range
+                    code_ids = [max(0, min(c, codebook_size - 1)) for c in code_ids]
+                
+                num_quantizers = getattr(quantizer, "num_quantizers", 1)
+                # Create indices tensor: [T_5Hz]
+                indices = torch.tensor(code_ids, device=self.device, dtype=torch.long)  # [T_5Hz]
+                
+                indices = indices.unsqueeze(0).unsqueeze(-1)  # [1, T_5Hz, 1]
+                
+                # Synchronize to catch any CUDA errors before proceeding
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                
+                # Get quantized representation from indices
+                # The quantizer expects [batch, T_5Hz] format and handles quantizer dimension internally
+                quantized = quantizer.get_output_from_indices(indices)
+                if quantized.dtype != self.dtype:
+                    quantized = quantized.to(self.dtype)
+                
+                # Detokenize to 25Hz: [1, T_5Hz, dim] -> [1, T_25Hz, dim]
+                lm_hints_25hz = detokenizer(quantized)
+                return lm_hints_25hz
+        except Exception as e:
+            logger.exception(f"[_decode_audio_codes_to_latents] Error decoding audio codes: {e}")
+            # Clear CUDA error state
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            return None
     
     def _create_default_meta(self) -> str:
         """Create default metadata string."""
@@ -1136,6 +1162,48 @@ class AceStepHandler:
         
         return audio
     
+    def _enforce_audio_duration_limits(
+        self, 
+        audio: torch.Tensor, 
+        sample_rate: int = 48000,
+        min_duration: float = 10.0,
+        max_duration: float = 600.0
+    ) -> torch.Tensor:
+        """
+        Enforce audio duration limits by truncating or repeating.
+        
+        Args:
+            audio: Audio tensor [channels, samples] at target sample rate
+            sample_rate: Sample rate of the audio (default: 48000)
+            min_duration: Minimum duration in seconds (default: 10.0)
+            max_duration: Maximum duration in seconds (default: 600.0)
+            
+        Returns:
+            Audio tensor with enforced duration limits
+        """
+        current_samples = audio.shape[-1]
+        current_duration = current_samples / sample_rate
+        
+        min_samples = int(min_duration * sample_rate)
+        max_samples = int(max_duration * sample_rate)
+        
+        # If audio is longer than max_duration, truncate
+        if current_samples > max_samples:
+            logger.info(f"[_enforce_audio_duration_limits] Truncating audio from {current_duration:.1f}s to {max_duration:.1f}s")
+            audio = audio[..., :max_samples]
+        
+        # If audio is shorter than min_duration, repeat to fill
+        elif current_samples < min_samples:
+            logger.info(f"[_enforce_audio_duration_limits] Repeating audio from {current_duration:.1f}s to reach {min_duration:.1f}s")
+            # Calculate how many times to repeat
+            repeat_times = int(math.ceil(min_samples / current_samples))
+            # Repeat along the time dimension
+            audio = audio.repeat(1, repeat_times)
+            # Truncate to exactly min_samples
+            audio = audio[..., :min_samples]
+        
+        return audio
+    
     def _normalize_audio_code_hints(self, audio_code_hints: Optional[Union[str, List[str]]], batch_size: int) -> List[Optional[str]]:
         """Normalize audio_code_hints to list of correct length."""
         if audio_code_hints is None:
@@ -1384,6 +1452,9 @@ class AceStepHandler:
             
             # Normalize to stereo 48kHz
             audio = self._normalize_audio_to_stereo_48k(audio, sr)
+            
+            # Enforce duration limits (10-600 seconds)
+            audio = self._enforce_audio_duration_limits(audio)
             
             return audio
             
@@ -1698,12 +1769,19 @@ class AceStepHandler:
         # Normalize audio_code_hints to batch list
         audio_code_hints = self._normalize_audio_code_hints(audio_code_hints, batch_size)
         
+        # Synchronize CUDA to catch any pending errors from previous operations
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        
         for ii, refer_audio_list in enumerate(refer_audios):
+            if refer_audio_list is None:
+                continue
             if isinstance(refer_audio_list, list):
                 for idx, refer_audio in enumerate(refer_audio_list):
-                    refer_audio_list[idx] = refer_audio_list[idx].to(self.device).to(torch.bfloat16)
+                    if refer_audio is not None and isinstance(refer_audio, torch.Tensor):
+                        refer_audio_list[idx] = refer_audio.to(self.device).to(torch.bfloat16)
             elif isinstance(refer_audio_list, torch.Tensor):
-                refer_audios[ii] = refer_audios[ii].to(self.device)
+                refer_audios[ii] = refer_audio_list.to(self.device)
         
         if vocal_languages is None:
             vocal_languages = self._create_fallback_vocal_languages(batch_size)
@@ -2860,6 +2938,15 @@ class AceStepHandler:
         except Exception as e:
             error_msg = f"❌ Error: {str(e)}\n{traceback.format_exc()}"
             logger.exception("[generate_music] Generation failed")
+            
+            # Clean up CUDA state after any error (especially important for CUDA errors)
+            if torch.cuda.is_available():
+                try:
+                    torch.cuda.synchronize()
+                except Exception:
+                    pass  # Ignore sync errors during cleanup
+                torch.cuda.empty_cache()
+            
             return {
                 "audios": [],
                 "status_message": error_msg,
