@@ -64,12 +64,12 @@ def create_gradio_interface(dit_handler, llm_handler, dataset_handler, init_para
         gr.HTML(f"""
         <div class="main-header">
             <h1>{t("app.title")}</h1>
-            <p>{t("app.subtitle")}</p>
+            <p>{t("app.subtitle")}, try more on <a href="https://acemusic.ai" target="_blank">acemusic.ai</a></p>
             <p style="margin-top: 0.5rem;">
                 <a href="https://ace-step.github.io/ace-step-v1.5.github.io/" target="_blank">Project</a> |
                 <a href="https://huggingface.co/collections/ACE-Step/ace-step-15" target="_blank">Hugging Face</a> |
                 <a href="https://modelscope.cn/models/ACE-Step/ACE-Step-v1-5" target="_blank">ModelScope</a> |
-                <a href="https://huggingface.co/spaces/ACE-Step/Ace-Step-v1.5" target="_blank">Space Demo</a> |
+                <a href="https://github.com/ACE-Step/ACE-Step-1.5" target="_blank">GitHub</a> |
                 <a href="https://discord.gg/PeWDxrkdj7" target="_blank">Discord</a> |
                 <a href="https://arxiv.org/abs/2506.00045" target="_blank">Technical Report</a>
             </p>
