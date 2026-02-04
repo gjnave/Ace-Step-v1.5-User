@@ -21,6 +21,12 @@ from acestep.constants import (
 
 
 # ==============================================================================
+# Constants
+# ==============================================================================
+# Maximum valid audio code value (codebook size = 64000, valid range: 0-63999)
+MAX_AUDIO_CODE = 63999
+
+# ==============================================================================
 # FSM States for Constrained Decoding
 # ==============================================================================
 class FSMState(Enum):
@@ -514,21 +520,34 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         """
         Precompute audio code token IDs (tokens matching <|audio_code_\\d+|>).
         These tokens should be blocked during caption generation.
+        Only tokens with code values in range [0, MAX_AUDIO_CODE] are included.
         """
         import re
-        audio_code_pattern = re.compile(r'^<\|audio_code_\d+\|>$')
+        audio_code_pattern = re.compile(r'^<\|audio_code_(\d+)\|>$')
+        out_of_range_count = 0
         
         # Iterate through vocabulary to find audio code tokens
         for token_id in range(self.vocab_size):
             try:
                 token_text = self.tokenizer.decode([token_id])
-                if audio_code_pattern.match(token_text):
-                    self.audio_code_token_ids.add(token_id)
+                match = audio_code_pattern.match(token_text)
+                if match:
+                    # Extract code value from token text
+                    code_value = int(match.group(1))
+                    # Only add tokens with valid code values (0-63999)
+                    if 0 <= code_value <= MAX_AUDIO_CODE:
+                        self.audio_code_token_ids.add(token_id)
+                    else:
+                        out_of_range_count += 1
+                        if self.debug:
+                            logger.debug(f"Skipping audio code token with out-of-range value: {token_text} (code={code_value})")
             except Exception:
                 continue
         
         if self.debug:
-            logger.debug(f"Found {len(self.audio_code_token_ids)} audio code tokens")
+            logger.debug(f"Found {len(self.audio_code_token_ids)} valid audio code tokens (skipped {out_of_range_count} out-of-range tokens)")
+        if out_of_range_count > 0:
+            logger.warning(f"Skipped {out_of_range_count} audio code tokens with values outside valid range [0, {MAX_AUDIO_CODE}]")
     
     def _build_audio_code_mask(self):
         """
@@ -1502,6 +1521,24 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
                 if self.non_audio_code_mask.device != scores.device or self.non_audio_code_mask.dtype != scores.dtype:
                     self.non_audio_code_mask = self.non_audio_code_mask.to(device=scores.device, dtype=scores.dtype)
                 scores = scores + self.non_audio_code_mask
+            
+            # Additional validation: block audio code tokens with out-of-range values
+            # This prevents generation of codes > MAX_AUDIO_CODE even if they exist in vocabulary
+            import re
+            audio_code_pattern = re.compile(r'^<\|audio_code_(\d+)\|>$')
+            for token_id in self.audio_code_token_ids:
+                try:
+                    token_text = self.tokenizer.decode([token_id])
+                    match = audio_code_pattern.match(token_text)
+                    if match:
+                        code_value = int(match.group(1))
+                        # Block tokens with code values outside valid range
+                        if code_value > MAX_AUDIO_CODE:
+                            scores[:, token_id] = float('-inf')
+                            if self.debug:
+                                logger.debug(f"Blocking out-of-range audio code token: {token_text} (code={code_value})")
+                except Exception:
+                    continue
             
             # Apply duration constraint in codes generation phase
             if self.target_codes is not None and self.eos_token_id is not None:
