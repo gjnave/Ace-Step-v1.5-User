@@ -774,32 +774,11 @@ class AceStepHandler:
             return None
     
     def _parse_audio_code_string(self, code_str: str) -> List[int]:
-        """
-        Extract integer audio codes from prompt tokens like <|audio_code_123|>.
-        Clamps code values to valid range [0, 63999].
-        """
+        """Extract integer audio codes from prompt tokens like <|audio_code_123|>."""
         if not code_str:
             return []
         try:
-            MAX_AUDIO_CODE = 63999
-            codes = [int(x) for x in re.findall(r"<\|audio_code_(\d+)\|>", code_str)]
-            # Clamp codes to valid range [0, 63999]
-            clamped_codes = []
-            clamped_count = 0
-            for code in codes:
-                if code < 0:
-                    clamped_codes.append(0)
-                    clamped_count += 1
-                elif code > MAX_AUDIO_CODE:
-                    clamped_codes.append(MAX_AUDIO_CODE)
-                    clamped_count += 1
-                else:
-                    clamped_codes.append(code)
-            
-            if clamped_count > 0:
-                logger.warning(f"[_parse_audio_code_string] Clamped {clamped_count} audio code values to valid range [0, {MAX_AUDIO_CODE}]")
-            
-            return clamped_codes
+            return [int(x) for x in re.findall(r"<\|audio_code_(\d+)\|>", code_str)]
         except Exception as e:
             logger.debug(f"[_parse_audio_code_string] Failed to parse audio code string: {e}")
             return []
@@ -821,23 +800,16 @@ class AceStepHandler:
                 detokenizer = self.model.detokenizer
                 
                 # Get codebook size for validation
-                # DIT quantizer supports codebook size = 64000 (valid range: 0-63999)
-                MAX_AUDIO_CODE = 63999
-                codebook_size = getattr(quantizer, 'codebook_size', 64000)
+                codebook_size = getattr(quantizer, 'codebook_size', 65536)
                 if hasattr(quantizer, 'quantizers') and len(quantizer.quantizers) > 0:
                     codebook_size = getattr(quantizer.quantizers[0], 'codebook_size', codebook_size)
                 
-                # Use 64000 as hard limit regardless of what quantizer reports
-                # This ensures compatibility with the actual DIT quantizer codebook size
-                effective_codebook_size = 64000
-                effective_max_code = MAX_AUDIO_CODE
-                
-                # Validate code IDs are within valid range [0, 63999]
-                invalid_codes = [c for c in code_ids if c < 0 or c > effective_max_code]
+                # Validate code IDs are within valid range
+                invalid_codes = [c for c in code_ids if c < 0 or c >= codebook_size]
                 if invalid_codes:
-                    logger.warning(f"[_decode_audio_codes_to_latents] Found {len(invalid_codes)} invalid codes out of range [0, {effective_max_code}]: {invalid_codes[:5]}...")
-                    # Clamp invalid codes to valid range [0, 63999]
-                    code_ids = [max(0, min(c, effective_max_code)) for c in code_ids]
+                    logger.warning(f"[_decode_audio_codes_to_latents] Found {len(invalid_codes)} invalid codes out of range [0, {codebook_size}): {invalid_codes[:5]}...")
+                    # Clamp invalid codes to valid range
+                    code_ids = [max(0, min(c, codebook_size - 1)) for c in code_ids]
                 
                 num_quantizers = getattr(quantizer, "num_quantizers", 1)
                 # Create indices tensor: [T_5Hz]
