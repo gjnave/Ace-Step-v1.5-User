@@ -774,11 +774,29 @@ class AceStepHandler:
             return None
     
     def _parse_audio_code_string(self, code_str: str) -> List[int]:
-        """Extract integer audio codes from prompt tokens like <|audio_code_123|>."""
+        """Extract integer audio codes from prompt tokens like <|audio_code_123|>.
+        Codes are clamped to valid range [0, 63999] (codebook size = 64000).
+        """
         if not code_str:
             return []
         try:
-            return [int(x) for x in re.findall(r"<\|audio_code_(\d+)\|>", code_str)]
+            codes = [int(x) for x in re.findall(r"<\|audio_code_(\d+)\|>", code_str)]
+            # Clamp codes to valid range [0, 63999]
+            MAX_AUDIO_CODE = 63999
+            clamped_codes = []
+            invalid_codes = []
+            for code in codes:
+                if code < 0 or code > MAX_AUDIO_CODE:
+                    invalid_codes.append(code)
+                    clamped_code = max(0, min(code, MAX_AUDIO_CODE))
+                    clamped_codes.append(clamped_code)
+                else:
+                    clamped_codes.append(code)
+            
+            if invalid_codes:
+                logger.warning(f"[_parse_audio_code_string] Found {len(invalid_codes)} codes outside valid range [0, {MAX_AUDIO_CODE}]: {invalid_codes[:5]}... (clamped to valid range)")
+            
+            return clamped_codes
         except Exception as e:
             logger.debug(f"[_parse_audio_code_string] Failed to parse audio code string: {e}")
             return []
@@ -800,7 +818,8 @@ class AceStepHandler:
                 detokenizer = self.model.detokenizer
                 
                 # Get codebook size for validation
-                codebook_size = getattr(quantizer, 'codebook_size', 65536)
+                # Default to 64000 (codebook size = 64000, valid range = 0-63999)
+                codebook_size = getattr(quantizer, 'codebook_size', 64000)
                 if hasattr(quantizer, 'quantizers') and len(quantizer.quantizers) > 0:
                     codebook_size = getattr(quantizer.quantizers[0], 'codebook_size', codebook_size)
                 
