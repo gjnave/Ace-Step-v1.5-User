@@ -1,7 +1,7 @@
 <h1 align="center">GET GOING FAST - User Edition</h1>
 <div align="center" style="display: flex; justify-content: center; margin-top: 10px;">
   <a href="https://higgs.getgoingfast.pro"><img src='https://www.cognibuild.ai/wp-content/uploads/2024/09/new.webp'🚀style="margin-right: 5px;"></a>
-  <a href="https://higgs.getgoingfast.pro">Download a Quick Installer w/ Gradio Here</a>
+  <a href="https://acestep15">Download a Quick Installer w/ Gradio Here</a>
 </div>
 <br/>
 <br/>
